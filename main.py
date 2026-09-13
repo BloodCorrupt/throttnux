@@ -28,6 +28,7 @@ from core import (
     live_monitor,
     save_config,
     load_config,
+    clear_saved_config,
     ask_user_action,
     prompt_operational_mode,
     prompt_blacklist_selection,
@@ -113,24 +114,38 @@ def main():
     # 2. Display devices UI with table 
     display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips)
     
-    action = ask_user_action(has_saved=has_saved)
-
-    while action == "rescan":
-        console.clear()
-        console.print()
-        
-        devices = scan_devices(interface, router_ip, existing_devices=devices, status_msg="Rescanning network, please wait...")
-        
-        # Re-validate dynamically on rescan
-        if has_saved:
-            matched_dev = match_saved_config(config, devices)
-            last_ips_rescan = [d["ip"] for d in matched_dev] if matched_dev else []
-        else:
-            matched_dev = None
-            last_ips_rescan = []
-            
-        display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips_rescan)
+    while True:
         action = ask_user_action(has_saved=has_saved)
+
+        if action == "clear_cache":
+            clear_saved_config()
+            config = None
+            has_saved = False
+            matched_dev = None
+            last_ips = []
+            console.clear()
+            console.print(" [success]Saved session and device cache cleared.[/success]\n")
+            devices = scan_devices(interface, router_ip, existing_devices=None, status_msg="Scanning network for active devices...")
+            display_devices(None, None, devices, last_ips=[])
+            continue
+        elif action == "rescan":
+            console.clear()
+            console.print()
+            
+            devices = scan_devices(interface, router_ip, existing_devices=devices, status_msg="Rescanning network, please wait...")
+            
+            # Re-validate dynamically on rescan
+            if has_saved:
+                matched_dev = match_saved_config(config, devices)
+                last_ips_rescan = [d["ip"] for d in matched_dev] if matched_dev else []
+            else:
+                matched_dev = None
+                last_ips_rescan = []
+                
+            display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips_rescan)
+            continue
+        else:
+            break
     
     if action == "use_saved":
         limit_mbps = config["limit_mbps"]

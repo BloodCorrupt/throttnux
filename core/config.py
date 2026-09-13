@@ -51,6 +51,18 @@ def load_config():
         return None
 
 
+def clear_saved_config():
+    """Delete ~/.config/throttnux/config.json if it exists."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            os.remove(CONFIG_FILE)
+            return True
+        except Exception as e:
+            log.warning(f"Failed to clear config file: {e}")
+            return False
+    return True
+
+
 def match_saved_config(config, devices):
     """
     Check if saved config target IP is present in current network scan.
@@ -89,6 +101,7 @@ def ask_user_action(has_saved=True):
         choices.append(questionary.Choice("Resume last session", value="use_saved"))
     choices.append(questionary.Choice("Start new session", value="new_scan"))
     choices.append(questionary.Choice("Rescan network", value="rescan"))
+    choices.append(questionary.Choice("Clear saved session & cache", value="clear_cache"))
     choices.append(questionary.Choice("Exit", value="exit"))
 
     answer = qselect(
