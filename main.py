@@ -97,7 +97,8 @@ def main():
     devices = scan_devices(interface, router_ip)
 
     # 1. Validate targets with live network data before rendering
-    matched_dev = match_saved_config(config, devices)
+    has_saved = bool(config and config.get("interface") == interface and config.get("router_ip") == router_ip)
+    matched_dev = match_saved_config(config, devices) if has_saved else None
     operational_mode = None
     
     if matched_dev:
@@ -106,46 +107,43 @@ def main():
     else:
         last_ips = []
         last_limit = None
+        if not has_saved:
+            console.print(" [dim]No previous session found on this network.[/dim]\n")
     
     # 2. Display devices UI with table 
-    display_devices(config, matched_dev, devices, last_ips=last_ips)
+    display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips)
     
-    
-    if matched_dev and config.get("interface") == interface and config.get("router_ip") == router_ip:
-        action = ask_user_action()
+    action = ask_user_action(has_saved=has_saved)
 
-        while action == "rescan":
-            console.clear()
-            console.print()
-            
-            devices = scan_devices(interface, router_ip, status_msg="Rescanning network, please wait...")
-            
-            # Re-validate dynamically on rescan
-            matched_dev = match_saved_config(config, devices)
-            if matched_dev:
-                last_ips_rescan = [d["ip"] for d in matched_dev]
-                display_devices(config, matched_dev, devices, last_ips=last_ips_rescan)
-                action = ask_user_action()
-            else:
-                display_devices(devices, last_ips=[])
-                action = "new_scan"
-                break
+    while action == "rescan":
+        console.clear()
+        console.print()
         
-        if action == "use_saved":
-            limit_mbps = config["limit_mbps"]
-            operational_mode = config.get("operational_mode", "blacklist")
-            targets_to_throttle = matched_dev
-            if operational_mode == "whitelist":
-                if config.get("whitelisted"):
-                    safe_ips = config["whitelisted"]
-                else:
-                    throttle_ips = set(d["ip"] for d in targets_to_throttle)
-                    safe_ips = [d["ip"] for d in devices if d["ip"] not in throttle_ips]
-            used_saved = True
-        elif action == "new_scan":
-            operational_mode = prompt_operational_mode()
-    else:
-        console.print(" [dim]No previous session found on this network.[/dim]\n")
+        devices = scan_devices(interface, router_ip, existing_devices=devices, status_msg="Rescanning network, please wait...")
+        
+        # Re-validate dynamically on rescan
+        if has_saved:
+            matched_dev = match_saved_config(config, devices)
+            last_ips_rescan = [d["ip"] for d in matched_dev] if matched_dev else []
+        else:
+            matched_dev = None
+            last_ips_rescan = []
+            
+        display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips_rescan)
+        action = ask_user_action(has_saved=has_saved)
+    
+    if action == "use_saved":
+        limit_mbps = config["limit_mbps"]
+        operational_mode = config.get("operational_mode", "blacklist")
+        targets_to_throttle = matched_dev
+        if operational_mode == "whitelist":
+            if config.get("whitelisted"):
+                safe_ips = config["whitelisted"]
+            else:
+                throttle_ips = set(d["ip"] for d in targets_to_throttle)
+                safe_ips = [d["ip"] for d in devices if d["ip"] not in throttle_ips]
+        used_saved = True
+    elif action == "new_scan":
         operational_mode = prompt_operational_mode()
 
 

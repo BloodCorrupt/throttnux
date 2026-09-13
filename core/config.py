@@ -83,15 +83,17 @@ def match_saved_config(config, devices):
     return matched if matched else None
     
     
-def ask_user_action():
+def ask_user_action(has_saved=True):
+    choices = []
+    if has_saved:
+        choices.append(questionary.Choice("Resume last session", value="use_saved"))
+    choices.append(questionary.Choice("Start new session", value="new_scan"))
+    choices.append(questionary.Choice("Rescan network", value="rescan"))
+    choices.append(questionary.Choice("Exit", value="exit"))
+
     answer = qselect(
         "What do you want to do?",
-        choices=[
-            questionary.Choice("Resume last session",   value="use_saved"),
-            questionary.Choice("Start new session",     value="new_scan"),
-            questionary.Choice("Rescan network",        value="rescan"),
-            questionary.Choice("Exit",                  value="exit"),
-        ],
+        choices=choices,
     )
  
     if answer is None:

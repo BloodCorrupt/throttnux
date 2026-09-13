@@ -51,32 +51,68 @@ def passive_arp_scan(interface, router_ip):
     return devices
 
 
-def scan_devices(interface, router_ip, status_msg="Scanning network for active devices..."):
-    """Scan all active devices on the local network using arp-scan."""
+def merge_devices(existing_devices, new_devices):
+    """
+    Merge existing scanned devices with newly scanned devices.
+    Retains all previously discovered devices so none are lost on rescan.
+    Updates IP and Vendor if changed for a known MAC.
+    """
+    if not existing_devices:
+        return list(new_devices)
+
+    merged = {d["mac"].lower(): dict(d) for d in existing_devices if d.get("mac")}
+    by_ip = {d["ip"]: dict(d) for d in existing_devices if not d.get("mac")}
+
+    for dev in new_devices:
+        mac = dev.get("mac", "").lower()
+        ip = dev.get("ip")
+        if mac:
+            if mac in merged:
+                merged[mac]["ip"] = ip
+                if dev.get("vendor") and dev["vendor"] != "Unknown":
+                    merged[mac]["vendor"] = dev["vendor"]
+            else:
+                merged[mac] = dict(dev)
+        elif ip:
+            by_ip[ip] = dict(dev)
+
+    result = list(merged.values()) + list(by_ip.values())
+    result.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
+    return result
+
+
+def scan_devices(interface, router_ip, existing_devices=None, status_msg="Scanning network for active devices..."):
+    """Scan all active devices on the local network using arp-scan, merging with existing devices if provided."""
     with console.status(status_msg, spinner="dots"):
-        devices = passive_arp_scan(interface, router_ip)
+        fresh_devices = passive_arp_scan(interface, router_ip)
+        devices = merge_devices(existing_devices, fresh_devices)
         
         if not devices:
             console.print(" [error]No devices found on the network.[/error]")
             sys.exit(1)
         else:
-            console.print(f" [success]Found {len(devices)} devices detected on network[/success]")
+            if existing_devices:
+                added = len(devices) - len(existing_devices)
+                if added > 0:
+                    console.print(f" [success]Found {len(fresh_devices)} active devices ({added} new device(s) added, {len(devices)} total)[/success]")
+                else:
+                    console.print(f" [success]Found {len(fresh_devices)} active devices ({len(devices)} total retained)[/success]")
+            else:
+                console.print(f" [success]Found {len(devices)} devices detected on network[/success]")
         
         return devices
 
 
 def display_devices(config, matched_devices, devices, last_ips=None):
-    mode_str = config.get("operational_mode", "Blacklist")
-    limit = config.get("limit_mbps", 1.0)
+    mode_str = config.get("operational_mode", "Blacklist") if config else "Blacklist"
+    limit = config.get("limit_mbps", 1.0) if config else 1.0
     
-   
-    if matched_devices:
+    if matched_devices and config:
         if len(matched_devices) == len(devices):
             console.print(f" [success]Last session: all devices {mode_str} {limit} Mbps[/success]")
         else:
             console.print(f" [success]Last session: {len(matched_devices)} devices {mode_str} {limit} Mbps[/success]")
             
-        
         for dev in matched_devices:
             vendor = dev.get("vendor", "Unknown")
             if not vendor or "locally administered" in vendor.lower():
@@ -85,19 +121,19 @@ def display_devices(config, matched_devices, devices, last_ips=None):
             if len(vendor) > 25:
                 vendor = vendor[:25]
             
-        
     table = Table(box=box.SIMPLE, title_style="bold", show_header=True)
     table.add_column("IP Address",  style="")
     table.add_column("MAC Address", style="")
     table.add_column("Device",      style="")
 
-    
     last_ips = last_ips or []
     
     for dev in devices:
         is_last   = dev["ip"] in last_ips
         
         vendor = dev.get("vendor", "unknown")
+        if not vendor or "locally administered" in vendor.lower():
+            vendor = "Unknown"
         if len(vendor) > 25:
             vendor = vendor[:25]
         
@@ -107,7 +143,6 @@ def display_devices(config, matched_devices, devices, last_ips=None):
     
         table.add_row(ip_cell, mac_cell, vendor_cell)
       
-    
     console.print(table)
 
 
