@@ -134,11 +134,11 @@ def prompt_blacklist_selection(devices, default_targets=None):
     
     choices = []
     initial_focus = None
+    max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
     
     for dev in devices:
-        
-        max_ip_len = max(len(dev['ip']) for dev in devices) 
-        display_line = f"{dev['ip']:<{max_ip_len}}  {dev['vendor']}"
+        mac = dev.get("mac", "Unknown")
+        display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
         
         is_checked = dev["mac"].lower() in default_macs
         
@@ -181,10 +181,11 @@ def prompt_whitelist_selection(devices, default_targets=None):
     
     choices = []
     initial_focus = None
+    max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
     
     for dev in devices:
-        max_ip_len = max(len(dev['ip']) for dev in devices) 
-        display_line = f"{dev['ip']:<{max_ip_len}}  {dev['vendor']}"
+        mac = dev.get("mac", "Unknown")
+        display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
 
         is_checked = dev["mac"].lower() in default_macs
                 
