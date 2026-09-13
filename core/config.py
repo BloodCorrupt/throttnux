@@ -81,14 +81,39 @@ def match_saved_config(config, devices):
     
     matched = []
     for saved in saved_targets:
-        saved_mac = saved.get("mac", "").lower()
-        saved_ip = saved.get("ip")
+        saved_mac = saved.get("mac", "").lower() if isinstance(saved, dict) else ""
+        saved_ip = saved.get("ip") if isinstance(saved, dict) else saved
         
         for d in devices:
             if saved_mac and d["mac"].lower() == saved_mac:
                 matched.append(d)
                 break
             elif not saved_mac and d["ip"] == saved_ip:
+                matched.append(d)
+                break
+                
+    return matched if matched else None
+
+
+def match_saved_whitelist(config, devices):
+    """
+    Check if saved whitelisted devices are present in current network scan.
+    Returns the matched whitelisted device dicts or None.
+    """
+    if not config or not config.get("whitelisted"):
+        return None
+    
+    saved_whitelisted = config.get("whitelisted", [])
+    matched = []
+    for saved in saved_whitelisted:
+        saved_mac = saved.get("mac", "").lower() if isinstance(saved, dict) else ""
+        saved_ip = saved.get("ip") if isinstance(saved, dict) else saved
+        
+        for d in devices:
+            if saved_mac and d.get("mac", "").lower() == saved_mac:
+                matched.append(d)
+                break
+            elif not saved_mac and d.get("ip") == saved_ip:
                 matched.append(d)
                 break
                 
@@ -145,7 +170,8 @@ def prompt_blacklist_selection(devices, default_targets=None):
     if default_targets is None:
         default_targets = []
         
-    default_macs = [t.get("mac", "").lower() for t in default_targets]
+    default_macs = [t.get("mac", "").lower() for t in default_targets if isinstance(t, dict) and t.get("mac")]
+    default_ips = [t.get("ip") if isinstance(t, dict) else t for t in default_targets]
     
     choices = []
     initial_focus = None
@@ -155,7 +181,7 @@ def prompt_blacklist_selection(devices, default_targets=None):
         mac = dev.get("mac", "Unknown")
         display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
         
-        is_checked = dev["mac"].lower() in default_macs
+        is_checked = (dev["mac"].lower() in default_macs) or (dev["ip"] in default_ips)
         
         choice = questionary.Choice(title=display_line, value=dev, checked=is_checked)
         choices.append(choice)
@@ -188,11 +214,12 @@ def prompt_blacklist_selection(devices, default_targets=None):
         sys.exit(0)
 
 
-def prompt_whitelist_selection(devices, default_targets=None):
-    if default_targets is None:
-        default_targets = []
+def prompt_whitelist_selection(devices, default_whitelisted=None):
+    if default_whitelisted is None:
+        default_whitelisted = []
         
-    default_macs = [t.get("mac", "").lower() for t in default_targets]
+    default_macs = {t.get("mac", "").lower() for t in default_whitelisted if isinstance(t, dict) and t.get("mac")}
+    default_ips = {t.get("ip") if isinstance(t, dict) else t for t in default_whitelisted}
     
     choices = []
     initial_focus = None
@@ -202,7 +229,7 @@ def prompt_whitelist_selection(devices, default_targets=None):
         mac = dev.get("mac", "Unknown")
         display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
 
-        is_checked = dev["mac"].lower() in default_macs
+        is_checked = (dev["mac"].lower() in default_macs) or (dev["ip"] in default_ips)
                 
         choice = questionary.Choice(title=display_line, value=dev, checked=is_checked)
         choices.append(choice)

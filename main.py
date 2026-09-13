@@ -34,7 +34,8 @@ from core import (
     prompt_blacklist_selection,
     prompt_whitelist_selection,
     prompt_session_review,
-    match_saved_config
+    match_saved_config,
+    match_saved_whitelist
 )
 
 logging.basicConfig(
@@ -89,7 +90,9 @@ def main():
     limit_mbps = None
     used_saved = False
     targets_to_throttle = []
-    safe_ips = []
+    safe_devices = []
+    safe_ips = set()
+    safe_macs = set()
     
     interface = pick_interface()
     router_ip = pick_router(interface)
@@ -99,20 +102,24 @@ def main():
 
     # 1. Validate targets with live network data before rendering
     has_saved = bool(config and config.get("interface") == interface and config.get("router_ip") == router_ip)
-    matched_dev = match_saved_config(config, devices) if has_saved else None
-    operational_mode = None
-    
-    if matched_dev:
-        last_ips = [d["ip"] for d in matched_dev]
-        last_limit = config.get("limit_mbps")
+    saved_mode = config.get("operational_mode", "blacklist") if has_saved else None
+
+    if has_saved and saved_mode == "whitelist":
+        matched_whitelisted = match_saved_whitelist(config, devices)
+        matched_dev = match_saved_config(config, devices)
+        last_ips = [d["ip"] for d in (matched_whitelisted or [])]
+    elif has_saved:
+        matched_whitelisted = None
+        matched_dev = match_saved_config(config, devices)
+        last_ips = [d["ip"] for d in (matched_dev or [])]
     else:
+        matched_whitelisted = None
+        matched_dev = None
         last_ips = []
-        last_limit = None
-        if not has_saved:
-            console.print(" [dim]No previous session found on this network.[/dim]\n")
+        console.print(" [dim]No previous session found on this network.[/dim]\n")
     
     # 2. Display devices UI with table 
-    display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips)
+    display_devices(config if has_saved else None, matched_whitelisted if saved_mode == "whitelist" else matched_dev, devices, last_ips=last_ips)
     
     while True:
         action = ask_user_action(has_saved=has_saved)
@@ -122,6 +129,7 @@ def main():
             config = None
             has_saved = False
             matched_dev = None
+            matched_whitelisted = None
             last_ips = []
             console.clear()
             console.print(" [success]Saved session and device cache cleared.[/success]\n")
@@ -136,13 +144,20 @@ def main():
             
             # Re-validate dynamically on rescan
             if has_saved:
-                matched_dev = match_saved_config(config, devices)
-                last_ips_rescan = [d["ip"] for d in matched_dev] if matched_dev else []
+                if saved_mode == "whitelist":
+                    matched_whitelisted = match_saved_whitelist(config, devices)
+                    matched_dev = match_saved_config(config, devices)
+                    last_ips_rescan = [d["ip"] for d in (matched_whitelisted or [])]
+                else:
+                    matched_whitelisted = None
+                    matched_dev = match_saved_config(config, devices)
+                    last_ips_rescan = [d["ip"] for d in (matched_dev or [])]
             else:
                 matched_dev = None
+                matched_whitelisted = None
                 last_ips_rescan = []
                 
-            display_devices(config if has_saved else None, matched_dev, devices, last_ips=last_ips_rescan)
+            display_devices(config if has_saved else None, matched_whitelisted if saved_mode == "whitelist" else matched_dev, devices, last_ips=last_ips_rescan)
             continue
         else:
             break
@@ -150,13 +165,20 @@ def main():
     if action == "use_saved":
         limit_mbps = config["limit_mbps"]
         operational_mode = config.get("operational_mode", "blacklist")
-        targets_to_throttle = matched_dev
         if operational_mode == "whitelist":
-            if config.get("whitelisted"):
-                safe_ips = config["whitelisted"]
-            else:
-                throttle_ips = set(d["ip"] for d in targets_to_throttle)
-                safe_ips = [d["ip"] for d in devices if d["ip"] not in throttle_ips]
+            saved_whitelisted = config.get("whitelisted", [])
+            safe_devices = match_saved_whitelist(config, devices) or [
+                d for d in saved_whitelisted if isinstance(d, dict)
+            ]
+            safe_macs = {d["mac"].lower() for d in safe_devices if isinstance(d, dict) and d.get("mac")}
+            safe_ips = {d["ip"] if isinstance(d, dict) else d for d in safe_devices}
+            
+            targets_to_throttle = [
+                d for d in devices
+                if not ((d.get("mac") and d["mac"].lower() in safe_macs) or d.get("ip") in safe_ips)
+            ]
+        else:
+            targets_to_throttle = matched_dev or []
         used_saved = True
     elif action == "new_scan":
         operational_mode = prompt_operational_mode()
@@ -167,10 +189,14 @@ def main():
             targets_to_throttle = prompt_blacklist_selection(devices, matched_dev)
 
         elif operational_mode == "whitelist":
-            safe_devices = prompt_whitelist_selection(devices, matched_dev)
-            safe_ips = [d["ip"] for d in safe_devices]
+            safe_devices = prompt_whitelist_selection(devices, matched_whitelisted)
+            safe_macs = {d["mac"].lower() for d in safe_devices if isinstance(d, dict) and d.get("mac")}
+            safe_ips = {d["ip"] if isinstance(d, dict) else d for d in safe_devices}
             
-            targets_to_throttle = [d for d in devices if d["ip"] not in safe_ips]
+            targets_to_throttle = [
+                d for d in devices
+                if not ((d.get("mac") and d["mac"].lower() in safe_macs) or d.get("ip") in safe_ips)
+            ]
 
             if not targets_to_throttle:
                 console.print(" [info]All current devices whitelisted. Dynamic scanner will throttle any new device that connects.[/info]")
@@ -188,6 +214,13 @@ def main():
 
     def on_new_device(dev):
         """Callback triggered by monitor's dynamic ARP scanner in whitelist mode."""
+        dev_mac = dev.get("mac", "").lower()
+        dev_ip = dev.get("ip")
+        if operational_mode == "whitelist":
+            if (dev_mac and dev_mac in safe_macs) or (dev_ip and dev_ip in safe_ips):
+                log.info(f"Refusing to throttle whitelisted device: {dev_ip} ({dev_mac})")
+                return None
+
         class_id = 10 + len(targets_to_throttle)
         add_target_shaping(interface, dev["ip"], class_id, limit_mbps)
         t = threading.Thread(
@@ -208,7 +241,7 @@ def main():
                 operational_mode,
                 targets_to_throttle,
                 limit_mbps,
-                whitelisted=safe_ips if operational_mode == "whitelist" else None
+                whitelisted=safe_devices if operational_mode == "whitelist" else None
             )
             
             enable_ip_forward()
@@ -242,7 +275,7 @@ def main():
                 args=(interface, targets_to_throttle, limit_mbps, stop_event),
                 kwargs={
                     "router_ip": router_ip,
-                    "whitelist_ips": safe_ips if operational_mode == "whitelist" else None,
+                    "whitelist_devices": safe_devices if operational_mode == "whitelist" else None,
                     "on_new_device": on_new_device if operational_mode == "whitelist" else None,
                 },
                 daemon=True

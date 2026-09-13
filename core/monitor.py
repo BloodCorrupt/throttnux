@@ -117,7 +117,7 @@ def verify_spoofing(interface, stop_event):
 
 
 def live_monitor(interface, targets, limit_mbps, stop_event,
-                 router_ip=None, whitelist_ips=None, on_new_device=None):
+                 router_ip=None, whitelist_devices=None, whitelist_ips=None, on_new_device=None):
     """
     Orchestrates the live CLI dashboard.
     Uses a background thread for ARP probing to keep UI non-blocking.
@@ -149,7 +149,20 @@ def live_monitor(interface, targets, limit_mbps, stop_event,
             "added_time":  0,
         }
 
-    safe_ips_set = set(whitelist_ips) if whitelist_ips is not None else set()
+    # Extract whitelisted MACs and IPs
+    safe_macs_set = set()
+    safe_ips_set  = set()
+
+    raw_whitelist = whitelist_devices if whitelist_devices is not None else whitelist_ips
+    if raw_whitelist is not None:
+        for item in raw_whitelist:
+            if isinstance(item, dict):
+                if item.get("mac"):
+                    safe_macs_set.add(item["mac"].lower())
+                if item.get("ip"):
+                    safe_ips_set.add(item["ip"])
+            elif isinstance(item, str):
+                safe_ips_set.add(item)
 
     def background_prober():
         """
@@ -179,6 +192,7 @@ def live_monitor(interface, targets, limit_mbps, stop_event,
         Periodically runs a background passive ARP scan to detect new devices.
         In whitelist mode, any newly discovered device not in the whitelist is
         dynamically shaped, spoofed, and added to the monitor.
+        Whitelisted devices (by MAC or IP) are never throttled.
         """
         while not stop_event.is_set():
             if stop_event.wait(10):
@@ -197,11 +211,17 @@ def live_monitor(interface, targets, limit_mbps, stop_event,
                 dev_ip = dev["ip"]
                 dev_mac = dev.get("mac", "").lower()
 
-                # Check if already tracked or whitelisted
+                # 1. WHITELIST PROTECTION: Never throttle whitelisted devices
+                if (dev_mac and dev_mac in safe_macs_set) or (dev_ip in safe_ips_set):
+                    if dev_mac and dev_mac in safe_macs_set and dev_ip not in safe_ips_set:
+                        safe_ips_set.add(dev_ip)
+                    continue
+
+                # 2. Check if already tracked or whitelisted
                 with states_lock:
                     if dev_ip in states or (dev_mac and dev_mac in known_macs):
                         continue
-                    if dev_ip in safe_ips_set:
+                    if (dev_mac and dev_mac in safe_macs_set) or (dev_ip in safe_ips_set):
                         continue
 
                     class_id = None
@@ -234,7 +254,7 @@ def live_monitor(interface, targets, limit_mbps, stop_event,
 
     threading.Thread(target=background_prober, daemon=True).start()
 
-    if router_ip and whitelist_ips is not None:
+    if router_ip and raw_whitelist is not None:
         threading.Thread(target=network_watcher, daemon=True).start()
 
     prev_time = time.time()
