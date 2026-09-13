@@ -47,5 +47,16 @@ def setup_traffic_shaping(interface, targets, limit_mbps):
         run(f"tc filter add dev {interface} parent 1: protocol ip prio {i*2+2} u32 match ip src {ip}/32 flowid 1:{class_id}")
 
 
+def add_target_shaping(interface, ip, class_id, limit_mbps):
+    """
+    Hotplug a single new target into an existing HTB qdisc without resetting existing rules.
+    """
+    limit_kbit = int(limit_mbps * 1000)
+    prio_base  = (class_id - 10) * 2 + 1
+    run(f"tc class add dev {interface} parent 1: classid 1:{class_id} htb rate {limit_kbit}kbit burst 10k")
+    run(f"tc filter add dev {interface} parent 1: protocol ip prio {prio_base} u32 match ip dst {ip}/32 flowid 1:{class_id}")
+    run(f"tc filter add dev {interface} parent 1: protocol ip prio {prio_base+1} u32 match ip src {ip}/32 flowid 1:{class_id}")
+
+
 def cleanup_traffic_shaping(interface):
     run(f"tc qdisc del dev {interface} root", check=False)

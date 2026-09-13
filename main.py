@@ -22,6 +22,7 @@ from core import (
     disable_ip_forward,
     setup_traffic_shaping,
     cleanup_traffic_shaping,
+    add_target_shaping,
     arp_spoof_loop,
     verify_spoofing,
     live_monitor,
@@ -87,6 +88,7 @@ def main():
     limit_mbps = None
     used_saved = False
     targets_to_throttle = []
+    safe_ips = []
     
     interface = pick_interface()
     router_ip = pick_router(interface)
@@ -133,6 +135,12 @@ def main():
             limit_mbps = config["limit_mbps"]
             operational_mode = config.get("operational_mode", "blacklist")
             targets_to_throttle = matched_dev
+            if operational_mode == "whitelist":
+                if config.get("whitelisted"):
+                    safe_ips = config["whitelisted"]
+                else:
+                    throttle_ips = set(d["ip"] for d in targets_to_throttle)
+                    safe_ips = [d["ip"] for d in devices if d["ip"] not in throttle_ips]
             used_saved = True
         elif action == "new_scan":
             operational_mode = prompt_operational_mode()
@@ -152,8 +160,7 @@ def main():
             targets_to_throttle = [d for d in devices if d["ip"] not in safe_ips]
 
             if not targets_to_throttle:
-                console.print(" [error]No targets to throttle. Everyone is whitelisted.[/error]")
-                sys.exit(0)
+                console.print(" [info]All current devices whitelisted. Dynamic scanner will throttle any new device that connects.[/info]")
                 
         limit_mbps = pick_limit(prompt)
         
@@ -166,9 +173,30 @@ def main():
     spoof_threads = []
     success = False
 
+    def on_new_device(dev):
+        """Callback triggered by monitor's dynamic ARP scanner in whitelist mode."""
+        class_id = 10 + len(targets_to_throttle)
+        add_target_shaping(interface, dev["ip"], class_id, limit_mbps)
+        t = threading.Thread(
+            target=arp_spoof_loop,
+            args=(interface, dev["ip"], router_ip, stop_event),
+            daemon=True
+        )
+        t.start()
+        spoof_threads.append(t)
+        targets_to_throttle.append(dev)
+        return class_id
+
     try:
         with console.status("Starting session...", spinner="dots"):
-            save_config(interface, router_ip, operational_mode, targets_to_throttle, limit_mbps)
+            save_config(
+                interface,
+                router_ip,
+                operational_mode,
+                targets_to_throttle,
+                limit_mbps,
+                whitelisted=safe_ips if operational_mode == "whitelist" else None
+            )
             
             enable_ip_forward()
             
@@ -183,17 +211,27 @@ def main():
                 t.start()
                 spoof_threads.append(t)
             
-            success = verify_spoofing(interface, stop_event)
-            
-            if not success:
-                stop_event.set()
+            if targets_to_throttle:
+                success = verify_spoofing(interface, stop_event)
+                if not success:
+                    stop_event.set()
+            else:
+                success = True
 
         if success:
-            console.print(" [success]Session started. Launching live monitor...[/success]")
+            if targets_to_throttle:
+                console.print(" [success]Session started. Launching live monitor...[/success]")
+            else:
+                console.print(" [success]Session started in whitelist mode. Waiting for new devices...[/success]")
             time.sleep(1.5)
             monitor_thread = threading.Thread(
                 target=live_monitor,
                 args=(interface, targets_to_throttle, limit_mbps, stop_event),
+                kwargs={
+                    "router_ip": router_ip,
+                    "whitelist_ips": safe_ips if operational_mode == "whitelist" else None,
+                    "on_new_device": on_new_device if operational_mode == "whitelist" else None,
+                },
                 daemon=True
             )
             monitor_thread.start()

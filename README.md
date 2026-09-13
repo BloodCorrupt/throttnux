@@ -25,13 +25,19 @@ Linux only (tested on Arch Linux, CachyOS, Fedora 43+ and Ubuntu 26.04+)
 
 ## Installation
 
-**1. Install Throttnux**
+**Option A: Run from Source (Recommended for development)**
 ```bash
-pipx install throttnux
+# 1. Setup virtual environment and install dependencies
+chmod +x setup.sh run.sh
+./setup.sh
+
+# 2. Launch (automatically handles sudo and virtualenv python)
+./run.sh
 ```
 
-**2. Run**
+**Option B: Install via pipx**
 ```bash
+pipx install throttnux
 sudo ln -s ~/.local/bin/throttnux /usr/local/bin/throttnux
 sudo throttnux
 ```

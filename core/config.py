@@ -18,7 +18,7 @@ CONFIG_DIR  = os.path.expanduser("~/.config/throttnux")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 
-def save_config(interface, router_ip, mode, targets, limit_mbps):
+def save_config(interface, router_ip, mode, targets, limit_mbps, whitelisted=None):
     """Save last session config to ~/.config/throttnux/config.json."""
     os.makedirs(CONFIG_DIR, exist_ok=True)
     
@@ -29,6 +29,8 @@ def save_config(interface, router_ip, mode, targets, limit_mbps):
         "targets":          targets,
         "limit_mbps":       limit_mbps,
     }
+    if whitelisted is not None:
+        config["whitelisted"] = whitelisted
     
     try:
         with open(CONFIG_FILE, "w") as f:
@@ -197,7 +199,7 @@ def prompt_whitelist_selection(devices, default_targets=None):
     
     try:
         answer = questionary.checkbox(
-            "Select targets:",
+            "Select whitelisted (safe) devices:",
             qmark="",
             instruction="(Space to select, Enter to confirm)",
             choices=choices,
@@ -232,18 +234,21 @@ def prompt_session_review(interface, router_ip, mode, limit_mbps, targets):
     max_ip_len = max([len(tgt["ip"]) for tgt in targets]) if targets else 15
     
     target_lines = []
-    for tgt in targets:
-        vendor = tgt.get("vendor", "Unknown Vendor")
-        
-        if not vendor or "locally administered" in vendor.lower():
-            vendor = "Unknown"
-    
-        if len(vendor) > 25:
-            vendor = vendor[:25]
+    if targets:
+        for tgt in targets:
+            vendor = tgt.get("vendor", "Unknown Vendor")
             
-        mac = tgt.get("mac", "Unknown")
+            if not vendor or "locally administered" in vendor.lower():
+                vendor = "Unknown"
         
-        target_lines.append(f"[white]{tgt['ip']:<{max_ip_len}}  {mac:<17}  {vendor}[/white]")
+            if len(vendor) > 25:
+                vendor = vendor[:25]
+                
+            mac = tgt.get("mac", "Unknown")
+            
+            target_lines.append(f"[white]{tgt['ip']:<{max_ip_len}}  {mac:<17}  {vendor}[/white]")
+    else:
+        target_lines.append("[dim white]None (all current devices safe — new devices will be dynamically auto-throttled)[/dim white]")
     
     content_group = Group(
         summary_text,

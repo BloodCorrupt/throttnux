@@ -19,33 +19,42 @@ def run(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
 
+def passive_arp_scan(interface, router_ip):
+    """
+    Lightweight silent ARP scan for background polling.
+    Does not write to console or exit if no devices are found.
+    """
+    result = run(f"arp-scan --localnet -I {interface}")
+
+    devices = []
+    for line in result.stdout.splitlines():
+        match = re.match(r"(\d+\.\d+\.\d+\.\d+)\s+([\w:]+)\s*(.*)", line)
+        if match:
+            ip, mac, vendor = match.groups()
+            if ip == router_ip:
+                continue
+            
+            vendor_clean = vendor.strip()
+
+            if not vendor_clean or "locally administered" in vendor_clean.lower():
+                vendor_name = "Unknown"
+            else:
+                vendor_name = vendor_clean
+            
+            devices.append({
+                "ip":     ip,
+                "mac":    mac.lower(),
+                "vendor": vendor_name
+            })
+    
+    devices.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
+    return devices
+
+
 def scan_devices(interface, router_ip, status_msg="Scanning network for active devices..."):
     """Scan all active devices on the local network using arp-scan."""
     with console.status(status_msg, spinner="dots"):
-        result = run(f"arp-scan --localnet -I {interface}")
-
-        devices = []
-        for line in result.stdout.splitlines():
-            match = re.match(r"(\d+\.\d+\.\d+\.\d+)\s+([\w:]+)\s*(.*)", line)
-            if match:
-                ip, mac, vendor = match.groups()
-                if ip == router_ip:
-                    continue
-                
-                vendor_clean = vendor.strip()
-
-                if not vendor_clean or "locally administered" in vendor_clean.lower():
-                    vendor_name = "Unknown"
-                else:
-                    vendor_name = vendor_clean
-                
-                devices.append({
-                    "ip":     ip,
-                    "mac":    mac.lower(),
-                    "vendor": vendor_name
-                    })
-        
-        devices.sort(key=lambda dev:ipaddress.ip_address(dev["ip"]))
+        devices = passive_arp_scan(interface, router_ip)
         
         if not devices:
             console.print(" [error]No devices found on the network.[/error]")
