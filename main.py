@@ -35,7 +35,10 @@ from core import (
     prompt_whitelist_selection,
     prompt_session_review,
     match_saved_config,
-    match_saved_whitelist
+    match_saved_whitelist,
+    prompt_manage_rules,
+    get_predefined_whitelist,
+    get_predefined_blacklist
 )
 
 logging.basicConfig(
@@ -124,7 +127,13 @@ def main():
     while True:
         action = ask_user_action(has_saved=has_saved)
 
-        if action == "clear_cache":
+        if action == "manage_rules":
+            prompt_manage_rules(devices)
+            console.clear()
+            console.print()
+            display_devices(config if has_saved else None, matched_whitelisted if saved_mode == "whitelist" else matched_dev, devices, last_ips=last_ips)
+            continue
+        elif action == "clear_cache":
             clear_saved_config()
             config = None
             has_saved = False
@@ -216,8 +225,9 @@ def main():
         """Callback triggered by monitor's dynamic ARP scanner in whitelist mode."""
         dev_mac = dev.get("mac", "").lower()
         dev_ip = dev.get("ip")
+        predefined_wl_macs = set(get_predefined_whitelist().keys())
         if operational_mode == "whitelist":
-            if (dev_mac and dev_mac in safe_macs) or (dev_ip and dev_ip in safe_ips):
+            if (dev_mac and (dev_mac in safe_macs or dev_mac in predefined_wl_macs)) or (dev_ip and dev_ip in safe_ips):
                 log.info(f"Refusing to throttle whitelisted device: {dev_ip} ({dev_mac})")
                 return None
 

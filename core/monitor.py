@@ -153,6 +153,11 @@ def live_monitor(interface, targets, limit_mbps, stop_event,
     safe_macs_set = set()
     safe_ips_set  = set()
 
+    # Always include global predefined whitelist MACs
+    from .config import get_predefined_whitelist
+    for pmac in get_predefined_whitelist().keys():
+        safe_macs_set.add(pmac.lower())
+
     raw_whitelist = whitelist_devices if whitelist_devices is not None else whitelist_ips
     if raw_whitelist is not None:
         for item in raw_whitelist:

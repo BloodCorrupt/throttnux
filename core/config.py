@@ -9,6 +9,7 @@ from .console import (custom_style,
                       console,
                       Panel,
                       Group,
+                      Table,
                       box,
                       qselect)
 
@@ -120,12 +121,206 @@ def match_saved_whitelist(config, devices):
     return matched if matched else None
     
     
+RULES_FILE  = os.path.join(CONFIG_DIR, "rules.json")
+
+
+def load_predefined_rules():
+    """
+    Load predefined whitelist and blacklist rules from ~/.config/throttnux/rules.json.
+    Returns:
+        dict: {"whitelist": {mac_lower: name}, "blacklist": {mac_lower: name}}
+    """
+    if not os.path.exists(RULES_FILE):
+        return {"whitelist": {}, "blacklist": {}}
+    
+    try:
+        with open(RULES_FILE, "r") as f:
+            data = json.load(f)
+            
+        rules = {"whitelist": {}, "blacklist": {}}
+        for category in ("whitelist", "blacklist"):
+            items = data.get(category, [])
+            for item in items:
+                if isinstance(item, dict):
+                    mac = item.get("mac", "").lower().strip()
+                    name = item.get("name", "").strip()
+                    if mac:
+                        rules[category][mac] = name
+                elif isinstance(item, str):
+                    mac = item.lower().strip()
+                    if mac:
+                        rules[category][mac] = ""
+        return rules
+    except Exception as e:
+        log.warning(f"Failed to load predefined rules: {e}")
+        return {"whitelist": {}, "blacklist": {}}
+
+
+def save_predefined_rules(rules):
+    """
+    Save predefined rules to ~/.config/throttnux/rules.json.
+    rules: dict {"whitelist": {mac: name}, "blacklist": {mac: name}}
+    """
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    
+    formatted_data = {
+        "whitelist": [
+            {"mac": mac, "name": name} if name else mac
+            for mac, name in rules.get("whitelist", {}).items()
+        ],
+        "blacklist": [
+            {"mac": mac, "name": name} if name else mac
+            for mac, name in rules.get("blacklist", {}).items()
+        ]
+    }
+    
+    try:
+        with open(RULES_FILE, "w") as f:
+            json.dump(formatted_data, f, indent=4)
+        return True
+    except Exception as e:
+        log.warning(f"Failed to save predefined rules: {e}")
+        return False
+
+
+def get_predefined_whitelist():
+    """Return dict of {mac_lower: name} for predefined global whitelist."""
+    return load_predefined_rules().get("whitelist", {})
+
+
+def get_predefined_blacklist():
+    """Return dict of {mac_lower: name} for predefined global blacklist."""
+    return load_predefined_rules().get("blacklist", {})
+
+
+def prompt_manage_rules(devices=None):
+    """
+    Interactive menu to view, add, and remove global whitelist/blacklist rules.
+    """
+    devices = devices or []
+    
+    while True:
+        rules = load_predefined_rules()
+        wl = rules.get("whitelist", {})
+        bl = rules.get("blacklist", {})
+
+        action = qselect(
+            "Global Rules Management (by MAC address):",
+            choices=[
+                questionary.Choice(f"View current global rules ({len(wl)} whitelisted, {len(bl)} blacklisted)", value="view"),
+                questionary.Choice("Add device(s) from scan to global Whitelist", value="add_scan_wl"),
+                questionary.Choice("Add device(s) from scan to global Blacklist", value="add_scan_bl"),
+                questionary.Choice("Add MAC address manually", value="add_manual"),
+                questionary.Choice("Remove a rule", value="remove"),
+                questionary.Choice("Back to main menu", value="back"),
+            ]
+        )
+
+        if action is None or action == "back":
+            break
+
+        if action == "view":
+            console.print()
+            table = Table(box=box.SIMPLE, title="[bold white]Global Pre-Defined Rules[/bold white]", show_header=True)
+            table.add_column("Type", style="bold")
+            table.add_column("MAC Address", style="")
+            table.add_column("Label / Device Name", style="")
+
+            if not wl and not bl:
+                table.add_row("[dim]Empty[/dim]", "[dim]No predefined rules configured[/dim]", "[dim]-[/dim]")
+            else:
+                for mac, name in wl.items():
+                    table.add_row("[green]WHITELIST[/green]", mac, name or "[dim]No label[/dim]")
+                for mac, name in bl.items():
+                    table.add_row("[red]BLACKLIST[/red]", mac, name or "[dim]No label[/dim]")
+
+            console.print(table)
+            console.print(f" [dim]Rules config file: {RULES_FILE}[/dim]\n")
+            input("  Press Enter to continue...")
+
+        elif action in ("add_scan_wl", "add_scan_bl"):
+            is_wl = action == "add_scan_wl"
+            target_list_name = "whitelist" if is_wl else "blacklist"
+            
+            if not devices:
+                console.print(" [error]No devices currently scanned to select from.[/error]")
+                continue
+
+            max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
+            choices = []
+            for dev in devices:
+                mac = dev.get("mac", "").lower()
+                already_in = mac in rules[target_list_name]
+                display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
+                choices.append(questionary.Choice(title=display_line, value=dev, checked=already_in))
+
+            selected = questionary.checkbox(
+                f"Select devices to add to global {target_list_name}:",
+                qmark="",
+                instruction="(Space to select, Enter to confirm)",
+                choices=choices,
+                style=custom_style
+            ).ask(kbi_msg="")
+
+            if selected:
+                for dev in selected:
+                    mac = dev.get("mac", "").lower()
+                    if mac:
+                        vendor = dev.get("vendor", "")
+                        if vendor and "locally administered" not in vendor.lower() and vendor != "Unknown":
+                            name = rules[target_list_name].get(mac) or vendor
+                        else:
+                            name = rules[target_list_name].get(mac) or ""
+                        rules[target_list_name][mac] = name
+                save_predefined_rules(rules)
+                console.print(f" [success]Updated global {target_list_name} ({len(selected)} device(s)).[/success]\n")
+
+        elif action == "add_manual":
+            cat = qselect("Add to which list?", [
+                questionary.Choice("Whitelist (Never throttle)", value="whitelist"),
+                questionary.Choice("Blacklist (Auto target)", value="blacklist"),
+                questionary.Choice("Cancel", value="cancel"),
+            ])
+            if cat in ("whitelist", "blacklist"):
+                mac_input = input("  Enter MAC address (e.g. aa:bb:cc:dd:ee:ff): ").strip().lower()
+                if mac_input:
+                    name_input = input("  Enter friendly name/label (optional): ").strip()
+                    rules[cat][mac_input] = name_input
+                    save_predefined_rules(rules)
+                    console.print(f" [success]Added {mac_input} to global {cat}.[/success]\n")
+                else:
+                    console.print(" [error]Invalid MAC address.[/error]")
+
+        elif action == "remove":
+            remove_choices = []
+            for mac, name in wl.items():
+                label = f"[WL] {mac} ({name})" if name else f"[WL] {mac}"
+                remove_choices.append(questionary.Choice(title=label, value=("whitelist", mac)))
+            for mac, name in bl.items():
+                label = f"[BL] {mac} ({name})" if name else f"[BL] {mac}"
+                remove_choices.append(questionary.Choice(title=label, value=("blacklist", mac)))
+
+            if not remove_choices:
+                console.print(" [info]No rules to remove.[/info]")
+                continue
+
+            remove_choices.append(questionary.Choice("Cancel", value=None))
+            to_remove = qselect("Select rule to remove:", choices=remove_choices)
+            if to_remove:
+                cat, mac = to_remove
+                if mac in rules[cat]:
+                    del rules[cat][mac]
+                    save_predefined_rules(rules)
+                    console.print(f" [success]Removed {mac} from global {cat}.[/success]\n")
+
+
 def ask_user_action(has_saved=True):
     choices = []
     if has_saved:
         choices.append(questionary.Choice("Resume last session", value="use_saved"))
     choices.append(questionary.Choice("Start new session", value="new_scan"))
     choices.append(questionary.Choice("Rescan network", value="rescan"))
+    choices.append(questionary.Choice("Manage global rules (whitelist/blacklist)", value="manage_rules"))
     choices.append(questionary.Choice("Clear saved session & cache", value="clear_cache"))
     choices.append(questionary.Choice("Exit", value="exit"))
 
@@ -173,15 +368,28 @@ def prompt_blacklist_selection(devices, default_targets=None):
     default_macs = [t.get("mac", "").lower() for t in default_targets if isinstance(t, dict) and t.get("mac")]
     default_ips = [t.get("ip") if isinstance(t, dict) else t for t in default_targets]
     
+    predefined_bl = get_predefined_blacklist()
+    
     choices = []
     initial_focus = None
     max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
     
     for dev in devices:
         mac = dev.get("mac", "Unknown")
-        display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
+        mac_lower = mac.lower()
+        vendor = dev.get("vendor", "")
         
-        is_checked = (dev["mac"].lower() in default_macs) or (dev["ip"] in default_ips)
+        is_predefined = mac_lower in predefined_bl
+        rule_name = predefined_bl.get(mac_lower, "")
+        
+        if is_predefined and rule_name:
+            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
+        elif is_predefined:
+            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} [Global Blacklist]"
+        else:
+            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor}"
+        
+        is_checked = (mac_lower in default_macs) or (dev["ip"] in default_ips) or is_predefined
         
         choice = questionary.Choice(title=display_line, value=dev, checked=is_checked)
         choices.append(choice)
@@ -221,15 +429,28 @@ def prompt_whitelist_selection(devices, default_whitelisted=None):
     default_macs = {t.get("mac", "").lower() for t in default_whitelisted if isinstance(t, dict) and t.get("mac")}
     default_ips = {t.get("ip") if isinstance(t, dict) else t for t in default_whitelisted}
     
+    predefined_wl = get_predefined_whitelist()
+    
     choices = []
     initial_focus = None
     max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
     
     for dev in devices:
         mac = dev.get("mac", "Unknown")
-        display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
+        mac_lower = mac.lower()
+        vendor = dev.get("vendor", "")
+        
+        is_predefined = mac_lower in predefined_wl
+        rule_name = predefined_wl.get(mac_lower, "")
+        
+        if is_predefined and rule_name:
+            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
+        elif is_predefined:
+            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} [Global Whitelist]"
+        else:
+            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor}"
 
-        is_checked = (dev["mac"].lower() in default_macs) or (dev["ip"] in default_ips)
+        is_checked = (mac_lower in default_macs) or (dev["ip"] in default_ips) or is_predefined
                 
         choice = questionary.Choice(title=display_line, value=dev, checked=is_checked)
         choices.append(choice)
