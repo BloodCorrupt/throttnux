@@ -124,44 +124,65 @@ def resolve_mac(ip, interface=None):
 
 def prompt_manual_device(interface=None):
     """
-    Prompt user to manually input IP address, auto-resolving or querying MAC address,
-    and optional friendly name/vendor.
+    Prompt user to manually input IP address or MAC address,
+    auto-resolving the other when possible, plus optional friendly name/label.
     Returns: {"ip": ip, "mac": mac, "vendor": vendor} or None.
     """
-    console.print("\n [bold white]Add Manual Device Entry[/bold white]")
+    console.print("\n [bold white]Manual Device Entry[/bold white]")
     try:
-        ip_input = input("  Enter IP address (e.g. 192.168.1.50): ").strip()
-        if not ip_input:
-            console.print("  [warning]No IP entered. Cancelled.[/warning]\n")
+        user_input = input("  Enter IP or MAC address (e.g. 192.168.1.50 or aa:bb:cc:dd:ee:ff): ").strip()
+        if not user_input:
+            console.print("  [warning]No address entered. Cancelled.[/warning]\n")
             return None
 
-        try:
-            ipaddress.ip_address(ip_input)
-        except ValueError:
-            console.print(f"  [error]Invalid IP address format: '{ip_input}'[/error]\n")
-            return None
+        clean_input = user_input.replace("-", ":").strip().lower()
+        is_mac = bool(re.match(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", clean_input))
 
-        # Attempt to auto-detect MAC
-        resolved_mac = resolve_mac(ip_input, interface)
-        if resolved_mac:
-            console.print(f"  [dim]Auto-detected MAC address: {resolved_mac}[/dim]")
-            mac_input = input(f"  Enter MAC address [{resolved_mac}]: ").strip().lower()
-            if not mac_input:
-                mac_input = resolved_mac
+        if is_mac:
+            mac = clean_input
+            # Try to resolve IP if possible from kernel table
+            ip = ""
+            try:
+                res = run("ip neigh show")
+                for line in res.stdout.splitlines():
+                    if mac in line.lower():
+                        parts = line.split()
+                        if parts:
+                            ip = parts[0]
+                            break
+            except Exception:
+                pass
+            if not ip:
+                ip_inp = input("  Enter IP address (optional): ").strip()
+                ip = ip_inp if ip_inp else "Unknown"
         else:
-            mac_input = input("  Enter MAC address (optional, e.g. aa:bb:cc:dd:ee:ff): ").strip().lower()
+            try:
+                ipaddress.ip_address(user_input)
+                ip = user_input
+            except ValueError:
+                console.print(f"  [error]Invalid IP or MAC format: '{user_input}'[/error]\n")
+                return None
 
-        mac_clean = mac_input.replace("-", ":").strip().lower() if mac_input else "Unknown"
+            # Attempt to auto-detect MAC
+            with console.status("Checking local ARP cache for MAC...", spinner="dots"):
+                resolved_mac = resolve_mac(ip, interface)
+            if resolved_mac:
+                console.print(f"  [dim]Auto-detected MAC address: {resolved_mac}[/dim]")
+                mac_input = input(f"  Enter MAC address [{resolved_mac}]: ").strip().lower()
+                mac = mac_input.replace("-", ":") if mac_input else resolved_mac
+            else:
+                mac_input = input("  Enter MAC address (optional, e.g. aa:bb:cc:dd:ee:ff): ").strip().lower()
+                mac = mac_input.replace("-", ":") if mac_input else "Unknown"
 
         name_input = input("  Enter friendly name/label (optional, e.g. My Phone): ").strip()
         vendor = name_input if name_input else "Manual Entry"
 
         dev = {
-            "ip": ip_input,
-            "mac": mac_clean,
+            "ip": ip,
+            "mac": mac,
             "vendor": vendor
         }
-        console.print(f"  [success]✓ Added device: {ip_input} ({mac_clean}) - {vendor}[/success]\n")
+        console.print(f"  [success]✓ Added device: {ip} ({mac}) - {vendor}[/success]\n")
         return dev
     except KeyboardInterrupt:
         console.print("\n  [dim]Cancelled manual entry.[/dim]\n")

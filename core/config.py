@@ -211,9 +211,8 @@ def prompt_manage_rules(devices=None, interface=None):
             "Global Rules Management (by MAC address):",
             choices=[
                 questionary.Choice(f"View current global rules ({len(wl)} whitelisted, {len(bl)} blacklisted)", value="view"),
-                questionary.Choice("Add device(s) from scan to global Whitelist", value="add_scan_wl"),
-                questionary.Choice("Add device(s) from scan to global Blacklist", value="add_scan_bl"),
-                questionary.Choice("Add entry manually (IP or MAC)", value="add_manual"),
+                questionary.Choice("Add to global Whitelist (from scan or manual IP/MAC)", value="add_scan_wl"),
+                questionary.Choice("Add to global Blacklist (from scan or manual IP/MAC)", value="add_scan_bl"),
                 questionary.Choice("Remove a rule", value="remove"),
                 questionary.Choice("Back to main menu", value="back"),
             ]
@@ -288,24 +287,6 @@ def prompt_manage_rules(devices=None, interface=None):
                 save_predefined_rules(rules)
                 count = len([d for d in selected if d != "__manual__"]) + (1 if "__manual__" in selected else 0)
                 console.print(f" [success]Updated global {target_list_name} ({count} device(s)).[/success]\n")
-
-        elif action == "add_manual":
-            cat = qselect("Add to which list?", [
-                questionary.Choice("Whitelist (Never throttle)", value="whitelist"),
-                questionary.Choice("Blacklist (Auto target)", value="blacklist"),
-                questionary.Choice("Cancel", value="cancel"),
-            ])
-            if cat in ("whitelist", "blacklist"):
-                manual_dev = prompt_manual_device(interface)
-                if manual_dev:
-                    mac = manual_dev.get("mac", "").lower()
-                    key = mac if mac != "unknown" and mac else manual_dev["ip"]
-                    rules[cat][key] = manual_dev.get("vendor", "")
-                    if not any(d.get("ip") == manual_dev["ip"] for d in devices):
-                        devices.append(manual_dev)
-                        devices.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
-                    save_predefined_rules(rules)
-                    console.print(f" [success]Added {key} to global {cat}.[/success]\n")
 
         elif action == "remove":
             remove_choices = []
