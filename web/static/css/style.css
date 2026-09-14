@@ -96,6 +96,20 @@ body {
     -webkit-text-fill-color: transparent;
 }
 
+.brand-plus {
+    font-size: 0.75rem;
+    font-weight: 900;
+    padding: 2px 6px;
+    margin-left: 4px;
+    background: var(--gradient-brand);
+    color: #000;
+    -webkit-text-fill-color: #000;
+    border-radius: 4px;
+    letter-spacing: 1px;
+    vertical-align: middle;
+    display: inline-block;
+}
+
 .brand-text span {
     font-size: 0.75rem;
     color: var(--text-muted);

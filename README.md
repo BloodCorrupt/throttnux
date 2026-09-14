@@ -1,21 +1,21 @@
-# Throttnux
+# Throttnux Plus
 
-Ever had someone on your network hogging all the bandwidth with no way to control it? Throttnux lets you limit the internet speed of any device on your local network directly from your Linux machine, without touching the router, changing firmware, or needing admin access.
+Ever had someone on your network hogging all the bandwidth with no way to control it? Throttnux Plus lets you limit the internet speed of any device on your local network directly from your Linux machine, without touching the router, changing firmware, or needing admin access.
 
-> **Linux only.** Windows and macOS are not supported. Throttnux relies on `arpspoof` and `tc`, which are Linux-exclusive tools with no equivalent on other operating systems.
+> **Linux only.** Windows and macOS are not supported. Throttnux Plus relies on `arpspoof` and `tc`, which are Linux-exclusive tools with no equivalent on other operating systems.
 
-Throttnux was inspired by Evillimiter and NetCut, which use similar ARP spoofing techniques.
+Throttnux Plus was inspired by Evillimiter and NetCut, featuring an interactive terminal CLI and a real-time reactive Web UI.
 
 ## How It Works
 
-1. **ARP Spoofing** Throttnux sends forged ARP replies to trick the target device into routing all its traffic through your machine.
+1. **ARP Spoofing** Throttnux Plus sends forged ARP replies to trick the target device into routing all its traffic through your machine.
 2. **Traffic Shaping** Using Linux `tc` (HTB), the intercepted traffic is throttled to your specified limit before being forwarded to the router.
 
 ```
-Without Throttnux:
+Without Throttnux Plus:
 Target Device ──────────────→ Router → Internet
 
-With Throttnux:
+With Throttnux Plus:
 Target Device → Your Machine (throttled) → Router → Internet
 ```
 

@@ -75,7 +75,7 @@ def prompt(text, valid_range=None):
 
 def banner():
     print()    
-    print(figlet_format("Throttnux", font="standard").rstrip())
+    print(figlet_format("Throttnux Plus", font="standard").rstrip())
     console.print("  [dim]Per-device bandwidth limiter via ARP spoofing[/dim]")
     print()    
 
@@ -343,7 +343,7 @@ def run_web_ui(host="0.0.0.0", port=5000):
     from web.app import app, engine
     
     banner()
-    console.print(f"  [bold green]●[/bold green] [bold white]Throttnux Web UI Dashboard[/bold white]")
+    console.print(f"  [bold green]●[/bold green] [bold white]Throttnux Plus Web Dashboard[/bold white]")
     console.print(f"  [dim]• Local URL   :[/dim] [bold cyan]http://127.0.0.1:{port}[/bold cyan]")
     if host == "0.0.0.0":
         console.print(f"  [dim]• Network URL :[/dim] [bold cyan]http://0.0.0.0:{port}[/bold cyan]")
@@ -354,8 +354,16 @@ def run_web_ui(host="0.0.0.0", port=5000):
     # Pre-scan network in background
     threading.Thread(target=engine.scan, daemon=True).start()
 
-    # Suppress werkzeug debug logs
+    # Suppress werkzeug bad request noise (e.g. random port scans or SOCKS probes)
+    class WerkzeugNoiseFilter(logging.Filter):
+        def filter(self, record):
+            msg = record.getMessage()
+            if "Bad request version" in msg or "Bad request syntax" in msg or "code 400" in msg:
+                return False
+            return True
+
     werkzeug_logger = logging.getLogger('werkzeug')
+    werkzeug_logger.addFilter(WerkzeugNoiseFilter())
     werkzeug_logger.setLevel(logging.ERROR)
 
     try:
@@ -368,7 +376,7 @@ def run_web_ui(host="0.0.0.0", port=5000):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Throttnux - Per-device bandwidth limiter via ARP spoofing")
+    parser = argparse.ArgumentParser(description="Throttnux Plus - Per-device bandwidth limiter via ARP spoofing")
     parser.add_argument("-w", "--web", action="store_true", help="Launch the web-based UI dashboard")
     parser.add_argument("-p", "--port", type=int, default=5000, help="Port to run Web UI on (default: 5000)")
     parser.add_argument("-H", "--host", type=str, default="0.0.0.0", help="Host IP to bind Web UI to (default: 0.0.0.0)")

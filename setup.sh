@@ -4,9 +4,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "========================================"
-echo " Throttnux - Virtualenv & Setup Script"
-echo "========================================"
+echo "============================================="
+echo " Throttnux Plus - Virtualenv & Setup Script"
+echo "============================================="
 
 # 1. Check Python 3 availability
 if ! command -v python3 &>/dev/null; then

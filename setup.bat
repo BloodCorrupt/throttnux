@@ -4,9 +4,9 @@ setlocal
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
-echo ========================================
-echo  Throttnux - Windows Setup Script
-echo ========================================
+echo =============================================
+echo  Throttnux Plus - Windows Setup Script
+echo =============================================
 
 REM Check Python
 python --version >nul 2>&1
