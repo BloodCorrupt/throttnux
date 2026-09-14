@@ -13,12 +13,16 @@ dependencies = [
     "rich",
     "questionary",
     "psutil",
-    "pyfiglet"
+    "pyfiglet",
+    "Flask"
 ]
 
 [project.scripts]
 throttnux = "main:main"
 
-[tool.setuptools]
-py-modules = ["main"]
-packages = ["core"] 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "web*"]
+
+[tool.setuptools.package-data]
+web = ["templates/*", "static/**/*"] 

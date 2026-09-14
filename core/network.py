@@ -55,6 +55,21 @@ def get_gateways():
     return gateways
 
 
+def get_interfaces():
+    """Return list of active interface names."""
+    return [iface["name"] for iface in get_active_interfaces()]
+
+
+def get_default_gateway(interface=None):
+    """Return default gateway IP for the specified or first active interface."""
+    gateways = get_gateways()
+    if interface:
+        matched = [g["ip"] for g in gateways if g["interface"] == interface]
+        if matched:
+            return matched[0]
+    return gateways[0]["ip"] if gateways else None
+
+
 def pick_interface():
     interfaces = get_active_interfaces()
     

@@ -1,5 +1,5 @@
 from .checks  import check_os, check_root, check_dependencies
-from .network  import pick_interface, pick_router
+from .network  import pick_interface, pick_router, get_interfaces, get_active_interfaces, get_gateways, get_default_gateway
 from .scanner  import scan_devices, display_devices, pick_limit, passive_arp_scan, merge_devices, resolve_mac, prompt_manual_device, device_sort_key
 from .shaping  import enable_ip_forward, disable_ip_forward, setup_traffic_shaping, cleanup_traffic_shaping, add_target_shaping
 from .spoof    import arp_spoof_loop
