@@ -543,29 +543,32 @@ body {
 /* Devices Table */
 .devices-table-container {
     overflow-x: auto;
+    width: 100%;
 }
 
 .devices-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
 }
 
 .devices-table th {
     text-align: left;
-    padding: 12px 16px;
+    padding: 10px 12px;
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
 }
 
 .devices-table td {
-    padding: 14px 16px;
+    padding: 9px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     vertical-align: middle;
+    white-space: nowrap;
 }
 
 .devices-table tr:hover td {
@@ -576,26 +579,61 @@ body {
     font-family: var(--font-mono);
     font-weight: 600;
     color: #fff;
+    white-space: nowrap;
 }
 
 .device-mac {
     font-family: var(--font-mono);
     color: var(--text-secondary);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
 }
 
-.device-vendor {
+/* Device Hostname & Vendor Column */
+.device-name-col {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1px;
+    max-width: 200px;
+    vertical-align: middle;
+}
+
+.device-hostname {
+    font-weight: 600;
+    color: #fff;
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.device-vendor-sub {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.device-vendor-only {
     color: var(--text-secondary);
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+    display: inline-block;
 }
 
 .badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 16px;
+    font-size: 0.72rem;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .badge-new {
@@ -619,8 +657,9 @@ body {
 .device-speed-pill {
     font-family: var(--font-mono);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--accent-cyan);
+    white-space: nowrap;
 }
 
 /* Custom Checkbox */
@@ -1003,30 +1042,85 @@ input:checked + .slider:before {
     transform: translateX(18px);
 }
 
+.hot-toggle-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.switch-toggle {
+    position: relative;
+    display: inline-block;
+    width: 32px;
+    height: 16px;
+}
+
+.switch-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.15);
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 34px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 10px;
+    width: 10px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #fff;
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background: var(--gradient-danger);
+    box-shadow: 0 0 8px rgba(255, 42, 109, 0.4);
+}
+
+input:checked + .slider:before {
+    transform: translateX(16px);
+}
+
 .label-throttled {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-family: var(--font-mono);
     font-weight: 700;
     color: var(--accent-rose);
+    white-space: nowrap;
 }
 
 .label-bypassed {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-family: var(--font-mono);
     color: var(--text-muted);
+    white-space: nowrap;
 }
 
 /* Status Indicator Dots */
 .status-dot-sm {
     display: inline-block;
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
 }
 
 .status-dot-sm.online {
     background: var(--accent-emerald);
-    box-shadow: 0 0 8px var(--accent-emerald);
+    box-shadow: 0 0 6px var(--accent-emerald);
 }
 
 .status-dot-sm.offline {
@@ -1037,26 +1131,28 @@ input:checked + .slider:before {
 .live-speed-cell {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    min-width: 140px;
+    gap: 3px;
+    min-width: 110px;
+    max-width: 130px;
 }
 
 .speed-text-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
 }
 
 .speed-mbps-text {
-    font-size: 0.75rem;
+    font-size: 0.68rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
 }
 
 .speed-meter-track {
     width: 100%;
-    height: 5px;
+    height: 4px;
     background: rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     overflow: hidden;
@@ -1067,24 +1163,25 @@ input:checked + .slider:before {
     background: var(--gradient-brand);
     border-radius: 4px;
     transition: width 0.4s ease;
-    box-shadow: 0 0 8px rgba(0, 242, 254, 0.5);
+    box-shadow: 0 0 6px rgba(0, 242, 254, 0.5);
 }
 
 /* Glowing Pulse Badge for Auto-Trapped Devices */
 .badge-pulse-glow {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 0.7rem;
+    gap: 3px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 0.65rem;
     font-weight: 800;
     font-family: var(--font-mono);
     background: rgba(255, 42, 109, 0.2);
     color: var(--accent-rose);
     border: 1px solid rgba(255, 42, 109, 0.5);
-    box-shadow: 0 0 12px rgba(255, 42, 109, 0.4);
+    box-shadow: 0 0 8px rgba(255, 42, 109, 0.4);
     animation: pulseAnimation 1.5s infinite;
+    white-space: nowrap;
 }
 
 .row-new-target {
@@ -1100,10 +1197,12 @@ input:checked + .slider:before {
     background: rgba(0, 242, 254, 0.15);
     color: var(--accent-cyan);
     border: 1px solid rgba(0, 242, 254, 0.3);
+    white-space: nowrap;
 }
 
 .badge-idle {
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-muted);
+    white-space: nowrap;
 }
 

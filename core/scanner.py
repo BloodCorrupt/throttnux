@@ -4,6 +4,8 @@ import subprocess
 import logging
 import questionary
 import ipaddress
+import socket
+from concurrent.futures import ThreadPoolExecutor
 
 from .console import (
     console,
@@ -14,9 +16,71 @@ from .console import (
 
 log = logging.getLogger("throttnux")
 
+# In-memory hostname cache to avoid duplicate DNS lookups
+_HOSTNAME_CACHE = {}
+
 
 def run(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True)
+
+
+def resolve_hostname(ip, timeout=0.25):
+    """
+    Ultra-lightweight reverse DNS / NetBIOS hostname resolution.
+    Returns hostname string or '' if not found.
+    """
+    if not ip or ip == "-" or ip == "Unknown":
+        return ""
+    if ip in _HOSTNAME_CACHE:
+        return _HOSTNAME_CACHE[ip]
+
+    name = ""
+    try:
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(timeout)
+        host, _, _ = socket.gethostbyaddr(ip)
+        socket.setdefaulttimeout(old_timeout)
+        if host and host != ip:
+            # Clean up domain suffix e.g. "my-phone.lan" -> "my-phone"
+            name = host.split('.')[0] if not host.endswith('.local') else host
+    except Exception:
+        name = ""
+
+    _HOSTNAME_CACHE[ip] = name
+    return name
+
+
+def populate_hostnames(devices):
+    """
+    Lightweight concurrent hostname resolver across a batch of devices.
+    Runs non-blocking threads with 0.25s timeout.
+    """
+    ips_to_query = [
+        d["ip"] for d in devices
+        if d.get("ip") and d["ip"] != "-" and d["ip"] != "Unknown" and not d.get("hostname")
+    ]
+
+    if ips_to_query:
+        try:
+            with ThreadPoolExecutor(max_workers=min(len(ips_to_query), 12)) as executor:
+                results = list(executor.map(resolve_hostname, ips_to_query))
+            ip_map = dict(zip(ips_to_query, results))
+            for d in devices:
+                ip = d.get("ip")
+                if ip in ip_map and ip_map[ip]:
+                    d["hostname"] = ip_map[ip]
+                elif "hostname" not in d:
+                    d["hostname"] = ""
+        except Exception:
+            for d in devices:
+                if "hostname" not in d:
+                    d["hostname"] = ""
+    else:
+        for d in devices:
+            if "hostname" not in d:
+                d["hostname"] = ""
+
+    return devices
 
 
 def device_sort_key(dev):
@@ -38,8 +102,8 @@ def device_sort_key(dev):
 
 def passive_arp_scan(interface, router_ip):
     """
-    Lightweight silent ARP scan for background polling.
-    Does not write to console or exit if no devices are found.
+    Lightweight silent ARP scan for background polling and active discovery.
+    Includes fast hostname lookup.
     """
     result = run(f"arp-scan --localnet -I {interface}")
 
@@ -59,11 +123,13 @@ def passive_arp_scan(interface, router_ip):
                 vendor_name = vendor_clean
             
             devices.append({
-                "ip":     ip,
-                "mac":    mac.lower(),
-                "vendor": vendor_name
+                "ip":       ip,
+                "mac":      mac.lower(),
+                "vendor":   vendor_name,
+                "hostname": ""
             })
     
+    devices = populate_hostnames(devices)
     devices.sort(key=device_sort_key)
     return devices
 
@@ -72,7 +138,7 @@ def merge_devices(existing_devices, new_devices):
     """
     Merge existing scanned devices with newly scanned devices.
     Retains all previously discovered devices so none are lost on rescan.
-    Updates IP and Vendor if changed for a known MAC.
+    Updates IP, Vendor, and Hostname if changed.
     """
     if not existing_devices:
         return list(new_devices)
@@ -83,20 +149,32 @@ def merge_devices(existing_devices, new_devices):
     for dev in new_devices:
         mac = dev.get("mac", "").lower()
         ip = dev.get("ip", "-")
+        hostname = dev.get("hostname", "")
+        vendor = dev.get("vendor", "")
+
         if mac and mac != "Unknown":
             if mac in merged:
                 if ip and ip != "-":
                     merged[mac]["ip"] = ip
-                if dev.get("vendor") and dev["vendor"] != "Unknown":
-                    merged[mac]["vendor"] = dev["vendor"]
+                if vendor and vendor != "Unknown":
+                    merged[mac]["vendor"] = vendor
+                if hostname:
+                    merged[mac]["hostname"] = hostname
             else:
                 merged[mac] = dict(dev)
         elif ip and ip != "-":
-            by_ip[ip] = dict(dev)
+            if ip in by_ip:
+                if vendor and vendor != "Unknown":
+                    by_ip[ip]["vendor"] = vendor
+                if hostname:
+                    by_ip[ip]["hostname"] = hostname
+            else:
+                by_ip[ip] = dict(dev)
 
     result = list(merged.values()) + list(by_ip.values())
     result.sort(key=device_sort_key)
     return result
+
 
 
 def resolve_mac(ip, interface=None):
@@ -287,14 +365,21 @@ def display_devices(config, matched_devices, devices, last_ips=None):
         is_last = dev_ip in last_ips
         
         vendor = dev.get("vendor", "Unknown")
+        hostname = dev.get("hostname", "")
         if not vendor or "locally administered" in vendor.lower():
             vendor = "Unknown"
-        if len(vendor) > 25:
-            vendor = vendor[:25]
+        
+        if hostname:
+            device_str = f"{hostname} ({vendor})" if vendor != "Unknown" else hostname
+        else:
+            device_str = vendor
+
+        if len(device_str) > 32:
+            device_str = device_str[:32] + "…"
         
         ip_cell     = f"[success]{dev_ip}[/success]" if is_last else dev_ip
         mac_cell    = f"[success]{dev.get('mac', 'Unknown')}[/success]" if is_last else dev.get('mac', 'Unknown')
-        vendor_cell = f"[success]{vendor}[/success]" if is_last else vendor
+        vendor_cell = f"[success]{device_str}[/success]" if is_last else device_str
     
         table.add_row(ip_cell, mac_cell, vendor_cell)
       

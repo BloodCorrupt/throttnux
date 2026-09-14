@@ -527,6 +527,19 @@ class ThrottnuxApp {
                 }
             }
 
+            // Hostname & Vendor Display
+            let nameHtml = '';
+            if (dev.hostname) {
+                nameHtml = `
+                    <div class="device-name-col">
+                        <span class="device-hostname" title="${dev.hostname}">${dev.hostname}</span>
+                        <span class="device-vendor-sub" title="${dev.vendor || 'Unknown'}">${dev.vendor || 'Unknown'}</span>
+                    </div>
+                `;
+            } else {
+                nameHtml = `<div class="device-name-col"><span class="device-vendor-only" title="${dev.vendor || 'Unknown'}">${dev.vendor || 'Unknown'}</span></div>`;
+            }
+
             tr.innerHTML = `
                 <td>
                     <input type="checkbox" class="custom-checkbox device-row-check" data-ip="${ip}" ${isChecked ? 'checked' : ''} ${isRunning ? 'disabled' : ''}>
@@ -534,7 +547,7 @@ class ThrottnuxApp {
                 <td>${statusToggleHtml}</td>
                 <td class="device-ip">${ip}</td>
                 <td class="device-mac">${dev.mac || 'Unknown'}</td>
-                <td class="device-vendor">${dev.vendor || 'Unknown'}</td>
+                <td>${nameHtml}</td>
                 <td>${badgeHtml}</td>
                 <td>${speedHtml}</td>
                 <td style="text-align: right;">
@@ -603,10 +616,22 @@ class ThrottnuxApp {
         tbody.innerHTML = '';
         this.state.devices.forEach(dev => {
             const tr = document.createElement('tr');
+            let nameHtml = '';
+            if (dev.hostname) {
+                nameHtml = `
+                    <div class="device-name-col">
+                        <span class="device-hostname" title="${dev.hostname}">${dev.hostname}</span>
+                        <span class="device-vendor-sub" title="${dev.vendor || 'Unknown'}">${dev.vendor || 'Unknown'}</span>
+                    </div>
+                `;
+            } else {
+                nameHtml = `<div class="device-name-col"><span class="device-vendor-only" title="${dev.vendor || 'Unknown'}">${dev.vendor || 'Unknown'}</span></div>`;
+            }
+
             tr.innerHTML = `
                 <td class="device-ip">${dev.ip || '-'}</td>
                 <td class="device-mac">${dev.mac || 'Unknown'}</td>
-                <td class="device-vendor">${dev.vendor || 'Unknown'}</td>
+                <td>${nameHtml}</td>
                 <td><span class="badge badge-new"><i class="fa-solid fa-wifi"></i> Active</span></td>
                 <td style="text-align: right;">
                     <button class="btn btn-secondary btn-sm" onclick="app.quickAddToRule('${dev.mac || ''}', '${dev.vendor || ''}')">

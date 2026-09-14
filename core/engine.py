@@ -6,7 +6,7 @@ import subprocess
 import queue
 
 from .network import get_interfaces, get_default_gateway
-from .scanner import passive_arp_scan, merge_devices, resolve_mac, device_sort_key
+from .scanner import passive_arp_scan, merge_devices, resolve_mac, resolve_hostname, device_sort_key
 from .shaping import (
     enable_ip_forward,
     disable_ip_forward,
@@ -162,7 +162,7 @@ class ThrottnuxEngine:
             except Exception:
                 pass
 
-    def add_manual_device(self, ip=None, mac=None, vendor="Manual Entry"):
+    def add_manual_device(self, ip=None, mac=None, vendor="Manual Entry", hostname=""):
         """Add or update a device manually."""
         with self.lock:
             mac_clean = mac.replace("-", ":").strip().lower() if mac else ""
@@ -173,10 +173,15 @@ class ThrottnuxEngine:
             elif not mac_clean:
                 mac_clean = "Unknown"
 
+            host_clean = hostname.strip() if hostname else ""
+            if not host_clean and ip_clean != "-":
+                host_clean = resolve_hostname(ip_clean)
+
             dev = {
                 "ip": ip_clean,
                 "mac": mac_clean,
-                "vendor": vendor or "Manual Entry"
+                "vendor": vendor or "Manual Entry",
+                "hostname": host_clean
             }
 
             existing_idx = None
