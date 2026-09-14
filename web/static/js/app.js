@@ -662,7 +662,17 @@ class ThrottnuxApp {
        4. SESSION ACTIONS
        ========================================================== */
     async toggleSession() {
+        const btn = document.getElementById('btnSessionControl');
+
         if (this.state.status === "RUNNING") {
+            // Immediate UI feedback
+            this.state.status = "STOPPING";
+            if (btn) {
+                btn.disabled = true;
+                btn.className = 'btn btn-secondary';
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Stopping...</span>';
+            }
+
             try {
                 const res = await fetch('/api/session/stop', { method: 'POST' });
                 const data = await res.json();
@@ -674,8 +684,10 @@ class ThrottnuxApp {
                 }
             } catch (e) {
                 this.showToast('Network error while stopping session.', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
             }
-        } else {
+        } else if (this.state.status !== "STOPPING" && this.state.status !== "SCANNING") {
             // Selected devices array
             const selectedDevices = this.state.devices.filter(d => this.state.selectedIps.has(d.ip));
             const globalWlMacs = new Set(Object.keys(this.state.rules.whitelist || {}).map(m => m.toLowerCase()));
@@ -712,6 +724,11 @@ class ThrottnuxApp {
                 });
             }
 
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Starting...</span>';
+            }
+
             try {
                 const payload = {
                     interface: this.state.interface,
@@ -737,6 +754,8 @@ class ThrottnuxApp {
                 }
             } catch (e) {
                 this.showToast('Error starting session.', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
             }
         }
     }

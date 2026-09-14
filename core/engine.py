@@ -405,18 +405,23 @@ class ThrottnuxEngine:
     def stop_session(self):
         """Safely stop traffic shaping and spoofing."""
         with self.lock:
-            if self.status != "RUNNING":
+            if self.status != "RUNNING" and self.status != "STOPPING":
                 return True, "Session is not running."
             self.status = "STOPPING"
 
         if self.stop_event:
             self.stop_event.set()
 
-        # Stop all individual spoofers
+        # Signal all spoofers in parallel
+        threads_to_join = []
         for ip, (t, evt) in list(self.spoof_threads.items()):
             evt.set()
-            t.join(timeout=2)
+            threads_to_join.append(t)
         self.spoof_threads.clear()
+
+        # Join spoofer threads with brief timeout
+        for t in threads_to_join:
+            t.join(timeout=0.2)
 
         # Cleanup traffic shaping
         if self.current_interface:
