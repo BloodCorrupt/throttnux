@@ -19,6 +19,23 @@ def run(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
 
+def device_sort_key(dev):
+    """
+    Safe sorting key for device dictionaries.
+    Sorts valid IPv4/IPv6 addresses numerically first.
+    Sorts unknown, missing, or '-' IP addresses alphabetically by MAC.
+    """
+    if not isinstance(dev, dict):
+        return (2, str(dev))
+    ip_str = dev.get("ip")
+    if ip_str and ip_str != "Unknown" and ip_str != "-":
+        try:
+            return (0, int(ipaddress.ip_address(ip_str)))
+        except ValueError:
+            pass
+    return (1, dev.get("mac", "").lower())
+
+
 def passive_arp_scan(interface, router_ip):
     """
     Lightweight silent ARP scan for background polling.
@@ -47,7 +64,7 @@ def passive_arp_scan(interface, router_ip):
                 "vendor": vendor_name
             })
     
-    devices.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
+    devices.sort(key=device_sort_key)
     return devices
 
 
@@ -60,24 +77,25 @@ def merge_devices(existing_devices, new_devices):
     if not existing_devices:
         return list(new_devices)
 
-    merged = {d["mac"].lower(): dict(d) for d in existing_devices if d.get("mac")}
-    by_ip = {d["ip"]: dict(d) for d in existing_devices if not d.get("mac")}
+    merged = {d["mac"].lower(): dict(d) for d in existing_devices if d.get("mac") and d["mac"] != "Unknown"}
+    by_ip = {d["ip"]: dict(d) for d in existing_devices if (not d.get("mac") or d["mac"] == "Unknown") and d.get("ip") and d["ip"] != "-"}
 
     for dev in new_devices:
         mac = dev.get("mac", "").lower()
-        ip = dev.get("ip")
-        if mac:
+        ip = dev.get("ip", "-")
+        if mac and mac != "Unknown":
             if mac in merged:
-                merged[mac]["ip"] = ip
+                if ip and ip != "-":
+                    merged[mac]["ip"] = ip
                 if dev.get("vendor") and dev["vendor"] != "Unknown":
                     merged[mac]["vendor"] = dev["vendor"]
             else:
                 merged[mac] = dict(dev)
-        elif ip:
+        elif ip and ip != "-":
             by_ip[ip] = dict(dev)
 
     result = list(merged.values()) + list(by_ip.values())
-    result.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
+    result.sort(key=device_sort_key)
     return result
 
 
@@ -86,7 +104,7 @@ def resolve_mac(ip, interface=None):
     Attempt to resolve MAC address for an IP address by checking ARP cache
     and sending an ICMP echo (ping) to trigger kernel ARP resolution.
     """
-    if not ip:
+    if not ip or ip == "-" or ip == "Unknown":
         return ""
 
     # 1. Quick check in existing kernel ARP/neighbor table
@@ -126,6 +144,7 @@ def prompt_manual_device(interface=None):
     """
     Prompt user to manually input IP address or MAC address,
     auto-resolving the other when possible, plus optional friendly name/label.
+    IP is completely optional when entering a MAC address.
     Returns: {"ip": ip, "mac": mac, "vendor": vendor} or None.
     """
     console.print("\n [bold white]Manual Device Entry[/bold white]")
@@ -140,8 +159,8 @@ def prompt_manual_device(interface=None):
 
         if is_mac:
             mac = clean_input
-            # Try to resolve IP if possible from kernel table
-            ip = ""
+            # Auto-detect IP silently from kernel neighbor cache if available
+            ip = "-"
             try:
                 res = run("ip neigh show")
                 for line in res.stdout.splitlines():
@@ -149,12 +168,10 @@ def prompt_manual_device(interface=None):
                         parts = line.split()
                         if parts:
                             ip = parts[0]
+                            console.print(f"  [dim]Auto-detected active IP: {ip}[/dim]")
                             break
             except Exception:
                 pass
-            if not ip:
-                ip_inp = input("  Enter IP address (optional): ").strip()
-                ip = ip_inp if ip_inp else "Unknown"
         else:
             try:
                 ipaddress.ip_address(user_input)
@@ -182,7 +199,10 @@ def prompt_manual_device(interface=None):
             "mac": mac,
             "vendor": vendor
         }
-        console.print(f"  [success]✓ Added device: {ip} ({mac}) - {vendor}[/success]\n")
+        if ip and ip != "-":
+            console.print(f"  [success]✓ Added device: {ip} ({mac}) - {vendor}[/success]\n")
+        else:
+            console.print(f"  [success]✓ Added device: {mac} ({vendor})[/success]\n")
         return dev
     except KeyboardInterrupt:
         console.print("\n  [dim]Cancelled manual entry.[/dim]\n")
@@ -263,16 +283,17 @@ def display_devices(config, matched_devices, devices, last_ips=None):
     last_ips = last_ips or []
     
     for dev in devices:
-        is_last   = dev["ip"] in last_ips
+        dev_ip = dev.get("ip") if dev.get("ip") and dev.get("ip") != "Unknown" else "-"
+        is_last = dev_ip in last_ips
         
-        vendor = dev.get("vendor", "unknown")
+        vendor = dev.get("vendor", "Unknown")
         if not vendor or "locally administered" in vendor.lower():
             vendor = "Unknown"
         if len(vendor) > 25:
             vendor = vendor[:25]
         
-        ip_cell     = f"[success]{dev['ip']}[/success]" if is_last else dev["ip"]
-        mac_cell    = f"[success]{dev['mac']}[/success]" if is_last else dev["mac"]
+        ip_cell     = f"[success]{dev_ip}[/success]" if is_last else dev_ip
+        mac_cell    = f"[success]{dev.get('mac', 'Unknown')}[/success]" if is_last else dev.get('mac', 'Unknown')
         vendor_cell = f"[success]{vendor}[/success]" if is_last else vendor
     
         table.add_row(ip_cell, mac_cell, vendor_cell)
@@ -289,6 +310,7 @@ def pick_limit(prompt_fn=None):
             questionary.Choice("1 Mbps — Heavy buffering, no HD YouTube",  value="1"),
             questionary.Choice("2 Mbps — Stuck at 480p",                   value="2"),
             questionary.Choice("3 Mbps — Occasional buffering at 720p",    value="3"),
+            questionary.Choice("0.5 Mbps — FUCKEM ALL",                    value="x"),
             questionary.Choice("Custom",                                    value="4")
             ]
         )
@@ -297,7 +319,7 @@ def pick_limit(prompt_fn=None):
         console.print(" [error]Cancelled by user.[/error]")
         sys.exit(0)
         
-    presets = {"1": 1.0, "2": 2.0, "3": 3.0}
+    presets = {"1": 1.0, "2": 2.0, "3": 3.0, "x": 0.5}
     
     if choice in presets:
         limit_value = presets[choice]

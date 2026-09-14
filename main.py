@@ -39,6 +39,7 @@ from core import (
     match_saved_whitelist,
     prompt_manage_rules,
     prompt_manual_device,
+    device_sort_key,
     get_predefined_whitelist,
     get_predefined_blacklist
 )
@@ -132,16 +133,18 @@ def main():
         if action == "add_device":
             dev = prompt_manual_device(interface)
             if dev:
+                mac = dev.get("mac", "").lower()
                 existing_idx = None
                 for idx, d in enumerate(devices):
-                    if d.get("ip") == dev["ip"] or (dev["mac"] != "Unknown" and d.get("mac", "").lower() == dev["mac"].lower()):
+                    d_mac = d.get("mac", "").lower()
+                    if (mac and mac != "unknown" and d_mac == mac) or (dev.get("ip") and dev["ip"] != "-" and d.get("ip") == dev["ip"]):
                         existing_idx = idx
                         break
                 if existing_idx is not None:
                     devices[existing_idx] = dev
                 else:
                     devices.append(dev)
-                devices.sort(key=lambda d: ipaddress.ip_address(d["ip"]))
+                devices.sort(key=device_sort_key)
             console.clear()
             console.print()
             display_devices(config if has_saved else None, matched_whitelisted if saved_mode == "whitelist" else matched_dev, devices, last_ips=last_ips)

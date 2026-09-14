@@ -14,7 +14,7 @@ from .console import (custom_style,
                       Table,
                       box,
                       qselect)
-from .scanner import prompt_manual_device
+from .scanner import prompt_manual_device, device_sort_key
 
 log = logging.getLogger("throttnux")
 
@@ -244,14 +244,15 @@ def prompt_manage_rules(devices=None, interface=None):
             is_wl = action == "add_scan_wl"
             target_list_name = "whitelist" if is_wl else "blacklist"
 
-            max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
+            max_ip_len = max((len(dev.get('ip') or '-') for dev in devices), default=15)
             choices = []
             choices.append(questionary.Choice(title="+ [Add device manually by IP or MAC]", value="__manual__"))
             
             for dev in devices:
                 mac = dev.get("mac", "").lower()
                 already_in = mac in rules[target_list_name]
-                display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {dev['vendor']}"
+                ip_str = dev.get("ip") if dev.get("ip") and dev["ip"] != "Unknown" else "-"
+                display_line = f"{ip_str:<{max_ip_len}}  {mac:<17}  {dev.get('vendor', '')}"
                 choices.append(questionary.Choice(title=display_line, value=dev, checked=already_in))
 
             selected = questionary.checkbox(
@@ -267,23 +268,26 @@ def prompt_manage_rules(devices=None, interface=None):
                     manual_dev = prompt_manual_device(interface)
                     if manual_dev:
                         mac = manual_dev.get("mac", "").lower()
-                        key = mac if mac != "unknown" and mac else manual_dev["ip"]
-                        rules[target_list_name][key] = manual_dev.get("vendor", "")
-                        if not any(d.get("ip") == manual_dev["ip"] for d in devices):
+                        key = mac if mac != "unknown" and mac else manual_dev.get("ip", "")
+                        if key:
+                            rules[target_list_name][key] = manual_dev.get("vendor", "")
+                        if not any(d.get("mac", "").lower() == mac if mac and mac != "unknown" else d.get("ip") == manual_dev.get("ip") for d in devices):
                             devices.append(manual_dev)
-                            devices.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
+                            devices.sort(key=device_sort_key)
 
                 for dev in selected:
                     if dev == "__manual__":
                         continue
                     mac = dev.get("mac", "").lower()
-                    if mac:
+                    if mac and mac != "unknown":
                         vendor = dev.get("vendor", "")
                         if vendor and "locally administered" not in vendor.lower() and vendor != "Unknown":
                             name = rules[target_list_name].get(mac) or vendor
                         else:
                             name = rules[target_list_name].get(mac) or ""
                         rules[target_list_name][mac] = name
+                    elif dev.get("ip") and dev["ip"] != "-" and dev["ip"] != "Unknown":
+                        rules[target_list_name][dev["ip"]] = dev.get("vendor", "")
                 save_predefined_rules(rules)
                 count = len([d for d in selected if d != "__manual__"]) + (1 if "__manual__" in selected else 0)
                 console.print(f" [success]Updated global {target_list_name} ({count} device(s)).[/success]\n")
@@ -370,7 +374,7 @@ def prompt_blacklist_selection(devices, default_targets=None, interface=None):
     
     choices = []
     initial_focus = None
-    max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
+    max_ip_len = max((len(dev.get('ip') or '-') for dev in devices), default=15)
     
     choices.append(questionary.Choice(title="+ [Add device manually by IP/MAC]", value="__manual__"))
 
@@ -378,18 +382,19 @@ def prompt_blacklist_selection(devices, default_targets=None, interface=None):
         mac = dev.get("mac", "Unknown")
         mac_lower = mac.lower()
         vendor = dev.get("vendor", "")
+        dev_ip = dev.get("ip") if dev.get("ip") and dev.get("ip") != "Unknown" else "-"
         
-        is_predefined = mac_lower in predefined_bl or dev["ip"] in predefined_bl
-        rule_name = predefined_bl.get(mac_lower, "") or predefined_bl.get(dev["ip"], "")
+        is_predefined = (mac_lower in predefined_bl) or (dev_ip != "-" and dev_ip in predefined_bl)
+        rule_name = predefined_bl.get(mac_lower, "") or (predefined_bl.get(dev_ip, "") if dev_ip != "-" else "")
         
         if is_predefined and rule_name:
-            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
+            display_line = f"{dev_ip:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
         elif is_predefined:
-            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} [Global Blacklist]"
+            display_line = f"{dev_ip:<{max_ip_len}}  {mac:<17}  {vendor} [Global Blacklist]"
         else:
-            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor}"
+            display_line = f"{dev_ip:<{max_ip_len}}  {mac:<17}  {vendor}"
         
-        is_checked = (mac_lower in default_macs) or (dev["ip"] in default_ips) or is_predefined
+        is_checked = (mac_lower in default_macs) or (dev_ip in default_ips) or is_predefined
         
         choice = questionary.Choice(title=display_line, value=dev, checked=is_checked)
         choices.append(choice)
@@ -421,10 +426,11 @@ def prompt_blacklist_selection(devices, default_targets=None, interface=None):
             while True:
                 dev = prompt_manual_device(interface)
                 if dev:
-                    if not any(d.get("ip") == dev["ip"] for d in devices):
+                    mac = dev.get("mac", "").lower()
+                    if not any(d.get("mac", "").lower() == mac if mac and mac != "unknown" else d.get("ip") == dev.get("ip") for d in devices):
                         devices.append(dev)
-                        devices.sort(key=lambda d: ipaddress.ip_address(d["ip"]))
-                    if not any(d.get("ip") == dev["ip"] for d in selected_targets):
+                        devices.sort(key=device_sort_key)
+                    if not any(d.get("mac", "").lower() == mac if mac and mac != "unknown" else d.get("ip") == dev.get("ip") for d in selected_targets):
                         selected_targets.append(dev)
                 try:
                     more = questionary.confirm("Add another manual target?", default=False).ask()
@@ -455,7 +461,7 @@ def prompt_whitelist_selection(devices, default_whitelisted=None, interface=None
     
     choices = []
     initial_focus = None
-    max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
+    max_ip_len = max((len(dev.get('ip') or '-') for dev in devices), default=15)
     
     choices.append(questionary.Choice(title="+ [Add device manually by IP/MAC]", value="__manual__"))
 
@@ -463,18 +469,19 @@ def prompt_whitelist_selection(devices, default_whitelisted=None, interface=None
         mac = dev.get("mac", "Unknown")
         mac_lower = mac.lower()
         vendor = dev.get("vendor", "")
+        dev_ip = dev.get("ip") if dev.get("ip") and dev.get("ip") != "Unknown" else "-"
         
-        is_predefined = mac_lower in predefined_wl or dev["ip"] in predefined_wl
-        rule_name = predefined_wl.get(mac_lower, "") or predefined_wl.get(dev["ip"], "")
+        is_predefined = (mac_lower in predefined_wl) or (dev_ip != "-" and dev_ip in predefined_wl)
+        rule_name = predefined_wl.get(mac_lower, "") or (predefined_wl.get(dev_ip, "") if dev_ip != "-" else "")
         
         if is_predefined and rule_name:
-            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
+            display_line = f"{dev_ip:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
         elif is_predefined:
-            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} [Global Whitelist]"
+            display_line = f"{dev_ip:<{max_ip_len}}  {mac:<17}  {vendor} [Global Whitelist]"
         else:
-            display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor}"
+            display_line = f"{dev_ip:<{max_ip_len}}  {mac:<17}  {vendor}"
 
-        is_checked = (mac_lower in default_macs) or (dev["ip"] in default_ips) or is_predefined
+        is_checked = (mac_lower in default_macs) or (dev_ip in default_ips) or is_predefined
                 
         choice = questionary.Choice(title=display_line, value=dev, checked=is_checked)
         choices.append(choice)
@@ -505,10 +512,11 @@ def prompt_whitelist_selection(devices, default_whitelisted=None, interface=None
             while True:
                 dev = prompt_manual_device(interface)
                 if dev:
-                    if not any(d.get("ip") == dev["ip"] for d in devices):
+                    mac = dev.get("mac", "").lower()
+                    if not any(d.get("mac", "").lower() == mac if mac and mac != "unknown" else d.get("ip") == dev.get("ip") for d in devices):
                         devices.append(dev)
-                        devices.sort(key=lambda d: ipaddress.ip_address(d["ip"]))
-                    if not any(d.get("ip") == dev["ip"] for d in selected_safe):
+                        devices.sort(key=device_sort_key)
+                    if not any(d.get("mac", "").lower() == mac if mac and mac != "unknown" else d.get("ip") == dev.get("ip") for d in selected_safe):
                         selected_safe.append(dev)
                 try:
                     more = questionary.confirm("Add another manual whitelisted device?", default=False).ask()
