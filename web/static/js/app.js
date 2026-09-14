@@ -24,7 +24,6 @@ class ThrottnuxApp {
         this.eventSource = null;
         this.timerInterval = null;
         this.isScanning = false;
-        this.reconnectAttempts = 0;
 
         this.init();
     }
@@ -50,7 +49,6 @@ class ThrottnuxApp {
         this.eventSource = new EventSource('/api/stream');
 
         this.eventSource.onopen = () => {
-            this.reconnectAttempts = 0;
             if (badge) {
                 badge.innerHTML = `<span class="status-dot"></span><span class="status-text">SSE Live Stream</span>`;
             }
@@ -61,7 +59,7 @@ class ThrottnuxApp {
                 const payload = JSON.parse(event.data);
                 this.handleSSEEvent(payload);
             } catch (e) {
-                // Heartbeat / keepalive
+                // Keepalive heartbeat
             }
         };
 
@@ -272,6 +270,9 @@ class ThrottnuxApp {
         document.getElementById('btnModeBlacklist').classList.toggle('active', mode === 'blacklist');
         document.getElementById('btnModeWhitelist').classList.toggle('active', mode === 'whitelist');
         document.getElementById('statModeSubtitle').textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
+
+        // Clear selection to reset defaults for the newly chosen mode
+        this.state.selectedIps.clear();
         this.updateRadarBanner();
         this.renderDashboardTable();
     }
@@ -414,9 +415,14 @@ class ThrottnuxApp {
             teleMap[t.ip] = t;
         });
 
+        // Set of active targets actually being throttled
         const runningTargetIps = new Set(
             this.state.targets.map(t => (typeof t === 'string' ? t : t.ip))
         );
+
+        // Global whitelist MACs
+        const globalWl = this.state.rules.whitelist || {};
+        const globalBl = this.state.rules.blacklist || {};
 
         const isRunning = this.state.status === "RUNNING";
         tbody.innerHTML = '';
@@ -426,14 +432,16 @@ class ThrottnuxApp {
             const macLower = (dev.mac || '').toLowerCase();
             const ip = dev.ip || '-';
 
-            const isGlobalWl = macLower in (this.state.rules.whitelist || {});
-            const isGlobalBl = macLower in (this.state.rules.blacklist || {});
-            const wlLabel = (this.state.rules.whitelist || {})[macLower];
-            const blLabel = (this.state.rules.blacklist || {})[macLower];
+            const isGlobalWl = macLower in globalWl;
+            const isGlobalBl = macLower in globalBl;
+            const wlLabel = globalWl[macLower];
+            const blLabel = globalBl[macLower];
 
             const isCurrentlyThrottled = runningTargetIps.has(ip);
 
-            // Auto select defaults if not interacted with
+            // Auto select defaults before session starts:
+            // - In Blacklist mode: default check Blacklisted targets
+            // - In Whitelist mode: default check Safe/Whitelisted devices
             let isChecked = this.state.selectedIps.has(ip);
             if (!isRunning && !this.state.selectedIps.size) {
                 if (this.state.mode === "blacklist" && isGlobalBl) isChecked = true;
@@ -484,24 +492,39 @@ class ThrottnuxApp {
                 `;
             }
 
-            // Hot-Toggle Switch Column
+            // Status Column & Live Switch
             let statusToggleHtml = '';
             if (isRunning) {
-                statusToggleHtml = `
-                    <div class="hot-toggle-wrap">
-                        ${onlineDot}
-                        <label class="switch-toggle" title="Click to hot-toggle throttling for this target">
-                            <input type="checkbox" class="hot-toggle-cb" data-ip="${ip}" ${isCurrentlyThrottled ? 'checked' : ''}>
-                            <span class="slider round"></span>
-                        </label>
-                        ${isCurrentlyThrottled ? '<span class="label-throttled">THROTTLED</span>' : '<span class="label-bypassed">BYPASSED</span>'}
-                        ${newBadge}
-                    </div>
-                `;
+                if (isGlobalWl) {
+                    // Safe devices are protected and bypassed
+                    statusToggleHtml = `
+                        <div class="hot-toggle-wrap">
+                            <span class="badge badge-whitelist"><i class="fa-solid fa-shield-check"></i> SAFE (IMMUNE)</span>
+                        </div>
+                    `;
+                } else {
+                    statusToggleHtml = `
+                        <div class="hot-toggle-wrap">
+                            ${onlineDot}
+                            <label class="switch-toggle" title="Click to hot-toggle throttling for this target">
+                                <input type="checkbox" class="hot-toggle-cb" data-ip="${ip}" ${isCurrentlyThrottled ? 'checked' : ''}>
+                                <span class="slider round"></span>
+                            </label>
+                            ${isCurrentlyThrottled ? '<span class="label-throttled">THROTTLED</span>' : '<span class="label-bypassed">BYPASSED</span>'}
+                            ${newBadge}
+                        </div>
+                    `;
+                }
             } else {
-                statusToggleHtml = isChecked 
-                    ? `<span class="badge badge-selected"><i class="fa-solid fa-check"></i> Selected</span>`
-                    : `<span class="badge badge-idle">Idle</span>`;
+                if (this.state.mode === "whitelist") {
+                    statusToggleHtml = isGlobalWl || isChecked
+                        ? `<span class="badge badge-whitelist"><i class="fa-solid fa-shield"></i> Safe / Whitelisted</span>`
+                        : `<span class="badge badge-blacklist"><i class="fa-solid fa-crosshairs"></i> Will Throttle</span>`;
+                } else {
+                    statusToggleHtml = isChecked 
+                        ? `<span class="badge badge-blacklist"><i class="fa-solid fa-crosshairs"></i> Target</span>`
+                        : `<span class="badge badge-idle">Idle</span>`;
+                }
             }
 
             tr.innerHTML = `
@@ -529,6 +552,9 @@ class ThrottnuxApp {
                         this.state.selectedIps.add(ip);
                     } else {
                         this.state.selectedIps.delete(ip);
+                    }
+                    if (!isRunning) {
+                        this.renderDashboardTable();
                     }
                 });
             }
@@ -652,21 +678,34 @@ class ThrottnuxApp {
         } else {
             // Selected devices array
             const selectedDevices = this.state.devices.filter(d => this.state.selectedIps.has(d.ip));
-            
+            const globalWlMacs = new Set(Object.keys(this.state.rules.whitelist || {}).map(m => m.toLowerCase()));
+
             let targets = [];
             let whitelisted = [];
 
             if (this.state.mode === "blacklist") {
-                targets = selectedDevices;
+                // In Blacklist mode: throttle selected devices (except any in global whitelist)
+                targets = selectedDevices.filter(d => !globalWlMacs.has((d.mac || '').toLowerCase()));
+                whitelisted = this.state.devices.filter(d => globalWlMacs.has((d.mac || '').toLowerCase()));
                 if (!targets.length) {
                     this.showToast('Please select at least one device to throttle.', 'error');
                     return;
                 }
             } else {
-                whitelisted = selectedDevices;
-                // In whitelist mode, throttle all current devices except selected
-                const safeMacs = new Set(whitelisted.map(d => (d.mac || '').toLowerCase()));
-                const safeIps = new Set(whitelisted.map(d => d.ip));
+                // In Whitelist mode:
+                // Safe devices = (all devices with global whitelist MAC) + (all selected devices)
+                const safeMacs = new Set([
+                    ...globalWlMacs,
+                    ...selectedDevices.map(d => (d.mac || '').toLowerCase()).filter(Boolean)
+                ]);
+                const safeIps = new Set(selectedDevices.map(d => d.ip).filter(ip => ip && ip !== '-'));
+
+                whitelisted = this.state.devices.filter(d => {
+                    const mac = (d.mac || '').toLowerCase();
+                    return (mac && safeMacs.has(mac)) || safeIps.has(d.ip);
+                });
+
+                // Targets = all current devices that are NOT in the safe set
                 targets = this.state.devices.filter(d => {
                     const mac = (d.mac || '').toLowerCase();
                     return !((mac && safeMacs.has(mac)) || safeIps.has(d.ip));
@@ -921,4 +960,3 @@ let app = null;
 window.addEventListener('DOMContentLoaded', () => {
     app = new ThrottnuxApp();
 });
-

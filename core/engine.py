@@ -217,8 +217,39 @@ class ThrottnuxEngine:
             self.current_router_ip = router_ip
             self.operational_mode = mode
             self.limit_mbps = float(limit_mbps)
-            self.targets = list(targets)
-            self.whitelisted = list(whitelisted) if whitelisted else []
+
+            # Build comprehensive safe list from global rules and session whitelist
+            global_whitelist_macs = {mac.lower() for mac in get_predefined_whitelist().keys()}
+            safe_macs = set(global_whitelist_macs)
+            
+            raw_whitelisted = list(whitelisted) if whitelisted else []
+            for dev in raw_whitelisted:
+                if isinstance(dev, dict) and dev.get("mac"):
+                    safe_macs.add(dev.get("mac").lower())
+
+            safe_ips = {
+                (dev.get("ip") if isinstance(dev, dict) else dev)
+                for dev in raw_whitelisted
+                if (dev.get("ip") if isinstance(dev, dict) else dev) and (dev.get("ip") if isinstance(dev, dict) else dev) != "-"
+            }
+
+            # Filter targets: strictly exclude any whitelisted device
+            filtered_targets = []
+            for tgt in targets:
+                tgt_ip = tgt.get("ip") if isinstance(tgt, dict) else tgt
+                tgt_mac = (tgt.get("mac") if isinstance(tgt, dict) else "").lower()
+
+                if tgt_mac and tgt_mac in safe_macs:
+                    log.info(f"Skipping whitelisted MAC {tgt_mac} ({tgt_ip}) from throttling.")
+                    continue
+                if tgt_ip and tgt_ip in safe_ips:
+                    log.info(f"Skipping whitelisted IP {tgt_ip} from throttling.")
+                    continue
+
+                filtered_targets.append(tgt)
+
+            self.targets = filtered_targets
+            self.whitelisted = raw_whitelisted
             self.session_start_time = time.time()
             self.stop_event = threading.Event()
             self.spoof_threads = {}
@@ -326,7 +357,17 @@ class ThrottnuxEngine:
             if not target_dev:
                 target_dev = {"ip": ip, "mac": "Unknown", "vendor": "Unknown"}
 
+            dev_mac = (target_dev.get("mac") or "").lower()
+            global_whitelist_macs = {mac.lower() for mac in get_predefined_whitelist().keys()}
+            session_safe_macs = {
+                (w.get("mac") if isinstance(w, dict) else "").lower()
+                for w in self.whitelisted
+            }
+
             if should_throttle:
+                if (dev_mac and (dev_mac in global_whitelist_macs or dev_mac in session_safe_macs)):
+                    return False, f"Device {ip} ({dev_mac}) is protected by Whitelist."
+
                 if ip in self.device_telemetry:
                     return True, "Target is already being throttled."
 
