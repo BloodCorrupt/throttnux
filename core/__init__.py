@@ -4,6 +4,7 @@ from .scanner  import scan_devices, display_devices, pick_limit, passive_arp_sca
 from .shaping  import enable_ip_forward, disable_ip_forward, setup_traffic_shaping, cleanup_traffic_shaping, add_target_shaping
 from .spoof    import arp_spoof_loop
 from .monitor  import verify_spoofing, live_monitor
+from .engine   import ThrottnuxEngine
 from .config   import (
     save_config,
     load_config,

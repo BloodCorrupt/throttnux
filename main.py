@@ -338,5 +338,47 @@ def main():
         console.print(" [success]Network restored and traffic shaping rules cleared.[/success]")
 
 
+def run_web_ui(host="0.0.0.0", port=5000):
+    """Launch the Flask-backed Web UI server."""
+    from web.app import app, engine
+    
+    banner()
+    console.print(f"  [bold green]●[/bold green] [bold white]Throttnux Web UI Dashboard[/bold white]")
+    console.print(f"  [dim]• Local URL   :[/dim] [bold cyan]http://127.0.0.1:{port}[/bold cyan]")
+    if host == "0.0.0.0":
+        console.print(f"  [dim]• Network URL :[/dim] [bold cyan]http://0.0.0.0:{port}[/bold cyan]")
+    console.print(f"  [dim]• Interface   :[/dim] [white]{engine.current_interface or 'Auto-detecting'}[/white]")
+    console.print(f"  [dim]• Gateway     :[/dim] [white]{engine.current_router_ip or 'Auto-detecting'}[/white]\n")
+    console.print("  [dim]Press Ctrl+C to stop the web server.[/dim]\n")
+    
+    # Pre-scan network in background
+    threading.Thread(target=engine.scan, daemon=True).start()
+
+    # Suppress werkzeug debug logs
+    werkzeug_logger = logging.getLogger('werkzeug')
+    werkzeug_logger.setLevel(logging.ERROR)
+
+    try:
+        app.run(host=host, port=port, debug=False)
+    except KeyboardInterrupt:
+        console.print("\n [error]Web server stopped.[/error]")
+    finally:
+        engine.stop_session()
+
+
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Throttnux - Per-device bandwidth limiter via ARP spoofing")
+    parser.add_argument("-w", "--web", action="store_true", help="Launch the web-based UI dashboard")
+    parser.add_argument("-p", "--port", type=int, default=5000, help="Port to run Web UI on (default: 5000)")
+    parser.add_argument("-H", "--host", type=str, default="0.0.0.0", help="Host IP to bind Web UI to (default: 0.0.0.0)")
+    
+    args = parser.parse_args()
+
+    if args.web:
+        check_os()
+        check_root()
+        check_dependencies()
+        run_web_ui(host=args.host, port=args.port)
+    else:
+        main()
