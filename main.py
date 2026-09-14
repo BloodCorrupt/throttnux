@@ -5,6 +5,7 @@ import signal
 import logging
 import threading
 import time
+import ipaddress
 
 from core.console import console
 from pyfiglet import figlet_format
@@ -37,6 +38,7 @@ from core import (
     match_saved_config,
     match_saved_whitelist,
     prompt_manage_rules,
+    prompt_manual_device,
     get_predefined_whitelist,
     get_predefined_blacklist
 )
@@ -127,8 +129,25 @@ def main():
     while True:
         action = ask_user_action(has_saved=has_saved)
 
-        if action == "manage_rules":
-            prompt_manage_rules(devices)
+        if action == "add_device":
+            dev = prompt_manual_device(interface)
+            if dev:
+                existing_idx = None
+                for idx, d in enumerate(devices):
+                    if d.get("ip") == dev["ip"] or (dev["mac"] != "Unknown" and d.get("mac", "").lower() == dev["mac"].lower()):
+                        existing_idx = idx
+                        break
+                if existing_idx is not None:
+                    devices[existing_idx] = dev
+                else:
+                    devices.append(dev)
+                devices.sort(key=lambda d: ipaddress.ip_address(d["ip"]))
+            console.clear()
+            console.print()
+            display_devices(config if has_saved else None, matched_whitelisted if saved_mode == "whitelist" else matched_dev, devices, last_ips=last_ips)
+            continue
+        elif action == "manage_rules":
+            prompt_manage_rules(devices, interface=interface)
             console.clear()
             console.print()
             display_devices(config if has_saved else None, matched_whitelisted if saved_mode == "whitelist" else matched_dev, devices, last_ips=last_ips)
@@ -195,10 +214,10 @@ def main():
 
     if not used_saved:
         if operational_mode == "blacklist" or operational_mode is None:
-            targets_to_throttle = prompt_blacklist_selection(devices, matched_dev)
+            targets_to_throttle = prompt_blacklist_selection(devices, matched_dev, interface=interface)
 
         elif operational_mode == "whitelist":
-            safe_devices = prompt_whitelist_selection(devices, matched_whitelisted)
+            safe_devices = prompt_whitelist_selection(devices, matched_whitelisted, interface=interface)
             safe_macs = {d["mac"].lower() for d in safe_devices if isinstance(d, dict) and d.get("mac")}
             safe_ips = {d["ip"] if isinstance(d, dict) else d for d in safe_devices}
             

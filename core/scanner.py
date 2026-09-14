@@ -81,24 +81,137 @@ def merge_devices(existing_devices, new_devices):
     return result
 
 
+def resolve_mac(ip, interface=None):
+    """
+    Attempt to resolve MAC address for an IP address by checking ARP cache
+    and sending an ICMP echo (ping) to trigger kernel ARP resolution.
+    """
+    if not ip:
+        return ""
+
+    # 1. Quick check in existing kernel ARP/neighbor table
+    try:
+        res = run(f"ip neigh show {ip}")
+        m = re.search(r"lladdr\s+([0-9a-fA-F:]{17})", res.stdout)
+        if m:
+            return m.group(1).lower()
+        res = run(f"arp -n {ip}")
+        m = re.search(r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})", res.stdout)
+        if m:
+            return m.group(1).lower()
+    except Exception:
+        pass
+
+    # 2. Ping once to prompt ARP resolution
+    try:
+        ping_cmd = f"ping -I {interface} -c 1 -W 1 {ip}" if interface else f"ping -c 1 -W 1 {ip}"
+        run(ping_cmd)
+
+        res = run(f"ip neigh show {ip}")
+        m = re.search(r"lladdr\s+([0-9a-fA-F:]{17})", res.stdout)
+        if m:
+            return m.group(1).lower()
+
+        res = run(f"arp -n {ip}")
+        m = re.search(r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})", res.stdout)
+        if m:
+            return m.group(1).lower()
+    except Exception:
+        pass
+
+    return ""
+
+
+def prompt_manual_device(interface=None):
+    """
+    Prompt user to manually input IP address, auto-resolving or querying MAC address,
+    and optional friendly name/vendor.
+    Returns: {"ip": ip, "mac": mac, "vendor": vendor} or None.
+    """
+    console.print("\n [bold white]Add Manual Device Entry[/bold white]")
+    try:
+        ip_input = input("  Enter IP address (e.g. 192.168.1.50): ").strip()
+        if not ip_input:
+            console.print("  [warning]No IP entered. Cancelled.[/warning]\n")
+            return None
+
+        try:
+            ipaddress.ip_address(ip_input)
+        except ValueError:
+            console.print(f"  [error]Invalid IP address format: '{ip_input}'[/error]\n")
+            return None
+
+        # Attempt to auto-detect MAC
+        resolved_mac = resolve_mac(ip_input, interface)
+        if resolved_mac:
+            console.print(f"  [dim]Auto-detected MAC address: {resolved_mac}[/dim]")
+            mac_input = input(f"  Enter MAC address [{resolved_mac}]: ").strip().lower()
+            if not mac_input:
+                mac_input = resolved_mac
+        else:
+            mac_input = input("  Enter MAC address (optional, e.g. aa:bb:cc:dd:ee:ff): ").strip().lower()
+
+        mac_clean = mac_input.replace("-", ":").strip().lower() if mac_input else "Unknown"
+
+        name_input = input("  Enter friendly name/label (optional, e.g. My Phone): ").strip()
+        vendor = name_input if name_input else "Manual Entry"
+
+        dev = {
+            "ip": ip_input,
+            "mac": mac_clean,
+            "vendor": vendor
+        }
+        console.print(f"  [success]✓ Added device: {ip_input} ({mac_clean}) - {vendor}[/success]\n")
+        return dev
+    except KeyboardInterrupt:
+        console.print("\n  [dim]Cancelled manual entry.[/dim]\n")
+        return None
+
+
 def scan_devices(interface, router_ip, existing_devices=None, status_msg="Scanning network for active devices..."):
     """Scan all active devices on the local network using arp-scan, merging with existing devices if provided."""
     with console.status(status_msg, spinner="dots"):
         fresh_devices = passive_arp_scan(interface, router_ip)
         devices = merge_devices(existing_devices, fresh_devices)
         
-        if not devices:
-            console.print(" [error]No devices found on the network.[/error]")
-            sys.exit(1)
+    if not devices:
+        console.print(" [warning]No devices automatically detected via ARP scan.[/warning]")
+        choice = qselect(
+            "What would you like to do?",
+            choices=[
+                questionary.Choice("Add target/safe device manually (IP/MAC)", value="manual"),
+                questionary.Choice("Rescan network", value="rescan"),
+                questionary.Choice("Exit", value="exit"),
+            ]
+        )
+        if choice == "manual":
+            devices = []
+            while True:
+                dev = prompt_manual_device(interface)
+                if dev:
+                    devices.append(dev)
+                if not devices:
+                    sys.exit(0)
+                try:
+                    more = questionary.confirm("Add another device?", default=False).ask()
+                    if not more:
+                        break
+                except KeyboardInterrupt:
+                    break
+            return devices
+        elif choice == "rescan":
+            return scan_devices(interface, router_ip, existing_devices=None, status_msg=status_msg)
         else:
-            if existing_devices:
-                added = len(devices) - len(existing_devices)
-                if added > 0:
-                    console.print(f" [success]Found {len(fresh_devices)} active devices ({added} new device(s) added, {len(devices)} total)[/success]")
-                else:
-                    console.print(f" [success]Found {len(fresh_devices)} active devices ({len(devices)} total retained)[/success]")
+            sys.exit(0)
+    else:
+        if existing_devices:
+            added = len(devices) - len(existing_devices)
+            if added > 0:
+                console.print(f" [success]Found {len(fresh_devices)} active devices ({added} new device(s) added, {len(devices)} total)[/success]")
             else:
-                console.print(f" [success]Found {len(devices)} devices detected on network[/success]")
+                console.print(f" [success]Found {len(fresh_devices)} active devices ({len(devices)} total retained)[/success]")
+        else:
+            console.print(f" [success]Found {len(devices)} devices detected on network[/success]")
         
         return devices
 

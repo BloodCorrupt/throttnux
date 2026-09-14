@@ -2,6 +2,8 @@ import json
 import os
 import logging
 import sys
+import re
+import ipaddress
 import questionary
 
 
@@ -12,6 +14,7 @@ from .console import (custom_style,
                       Table,
                       box,
                       qselect)
+from .scanner import prompt_manual_device
 
 log = logging.getLogger("throttnux")
 
@@ -193,11 +196,11 @@ def get_predefined_blacklist():
     return load_predefined_rules().get("blacklist", {})
 
 
-def prompt_manage_rules(devices=None):
+def prompt_manage_rules(devices=None, interface=None):
     """
     Interactive menu to view, add, and remove global whitelist/blacklist rules.
     """
-    devices = devices or []
+    devices = devices if devices is not None else []
     
     while True:
         rules = load_predefined_rules()
@@ -210,7 +213,7 @@ def prompt_manage_rules(devices=None):
                 questionary.Choice(f"View current global rules ({len(wl)} whitelisted, {len(bl)} blacklisted)", value="view"),
                 questionary.Choice("Add device(s) from scan to global Whitelist", value="add_scan_wl"),
                 questionary.Choice("Add device(s) from scan to global Blacklist", value="add_scan_bl"),
-                questionary.Choice("Add MAC address manually", value="add_manual"),
+                questionary.Choice("Add entry manually (IP or MAC)", value="add_manual"),
                 questionary.Choice("Remove a rule", value="remove"),
                 questionary.Choice("Back to main menu", value="back"),
             ]
@@ -241,13 +244,11 @@ def prompt_manage_rules(devices=None):
         elif action in ("add_scan_wl", "add_scan_bl"):
             is_wl = action == "add_scan_wl"
             target_list_name = "whitelist" if is_wl else "blacklist"
-            
-            if not devices:
-                console.print(" [error]No devices currently scanned to select from.[/error]")
-                continue
 
             max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
             choices = []
+            choices.append(questionary.Choice(title="+ [Add device manually by IP or MAC]", value="__manual__"))
+            
             for dev in devices:
                 mac = dev.get("mac", "").lower()
                 already_in = mac in rules[target_list_name]
@@ -263,7 +264,19 @@ def prompt_manage_rules(devices=None):
             ).ask(kbi_msg="")
 
             if selected:
+                if "__manual__" in selected:
+                    manual_dev = prompt_manual_device(interface)
+                    if manual_dev:
+                        mac = manual_dev.get("mac", "").lower()
+                        key = mac if mac != "unknown" and mac else manual_dev["ip"]
+                        rules[target_list_name][key] = manual_dev.get("vendor", "")
+                        if not any(d.get("ip") == manual_dev["ip"] for d in devices):
+                            devices.append(manual_dev)
+                            devices.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
+
                 for dev in selected:
+                    if dev == "__manual__":
+                        continue
                     mac = dev.get("mac", "").lower()
                     if mac:
                         vendor = dev.get("vendor", "")
@@ -273,7 +286,8 @@ def prompt_manage_rules(devices=None):
                             name = rules[target_list_name].get(mac) or ""
                         rules[target_list_name][mac] = name
                 save_predefined_rules(rules)
-                console.print(f" [success]Updated global {target_list_name} ({len(selected)} device(s)).[/success]\n")
+                count = len([d for d in selected if d != "__manual__"]) + (1 if "__manual__" in selected else 0)
+                console.print(f" [success]Updated global {target_list_name} ({count} device(s)).[/success]\n")
 
         elif action == "add_manual":
             cat = qselect("Add to which list?", [
@@ -282,14 +296,16 @@ def prompt_manage_rules(devices=None):
                 questionary.Choice("Cancel", value="cancel"),
             ])
             if cat in ("whitelist", "blacklist"):
-                mac_input = input("  Enter MAC address (e.g. aa:bb:cc:dd:ee:ff): ").strip().lower()
-                if mac_input:
-                    name_input = input("  Enter friendly name/label (optional): ").strip()
-                    rules[cat][mac_input] = name_input
+                manual_dev = prompt_manual_device(interface)
+                if manual_dev:
+                    mac = manual_dev.get("mac", "").lower()
+                    key = mac if mac != "unknown" and mac else manual_dev["ip"]
+                    rules[cat][key] = manual_dev.get("vendor", "")
+                    if not any(d.get("ip") == manual_dev["ip"] for d in devices):
+                        devices.append(manual_dev)
+                        devices.sort(key=lambda dev: ipaddress.ip_address(dev["ip"]))
                     save_predefined_rules(rules)
-                    console.print(f" [success]Added {mac_input} to global {cat}.[/success]\n")
-                else:
-                    console.print(" [error]Invalid MAC address.[/error]")
+                    console.print(f" [success]Added {key} to global {cat}.[/success]\n")
 
         elif action == "remove":
             remove_choices = []
@@ -320,6 +336,7 @@ def ask_user_action(has_saved=True):
         choices.append(questionary.Choice("Resume last session", value="use_saved"))
     choices.append(questionary.Choice("Start new session", value="new_scan"))
     choices.append(questionary.Choice("Rescan network", value="rescan"))
+    choices.append(questionary.Choice("Add device manually (IP/MAC)", value="add_device"))
     choices.append(questionary.Choice("Manage global rules (whitelist/blacklist)", value="manage_rules"))
     choices.append(questionary.Choice("Clear saved session & cache", value="clear_cache"))
     choices.append(questionary.Choice("Exit", value="exit"))
@@ -361,7 +378,7 @@ def prompt_operational_mode():
         sys.exit(0)
 
 
-def prompt_blacklist_selection(devices, default_targets=None):
+def prompt_blacklist_selection(devices, default_targets=None, interface=None):
     if default_targets is None:
         default_targets = []
         
@@ -374,13 +391,15 @@ def prompt_blacklist_selection(devices, default_targets=None):
     initial_focus = None
     max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
     
+    choices.append(questionary.Choice(title="+ [Add device manually by IP/MAC]", value="__manual__"))
+
     for dev in devices:
         mac = dev.get("mac", "Unknown")
         mac_lower = mac.lower()
         vendor = dev.get("vendor", "")
         
-        is_predefined = mac_lower in predefined_bl
-        rule_name = predefined_bl.get(mac_lower, "")
+        is_predefined = mac_lower in predefined_bl or dev["ip"] in predefined_bl
+        rule_name = predefined_bl.get(mac_lower, "") or predefined_bl.get(dev["ip"], "")
         
         if is_predefined and rule_name:
             display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
@@ -411,18 +430,40 @@ def prompt_blacklist_selection(devices, default_targets=None):
             pointer=">",
         ).ask(kbi_msg="")
         
-        if not answer:
+        if answer is None:
+            console.print(" [error]Cancelled by user.[/error]")
+            sys.exit(0)
+
+        selected_targets = [d for d in answer if d != "__manual__"]
+
+        if "__manual__" in answer:
+            while True:
+                dev = prompt_manual_device(interface)
+                if dev:
+                    if not any(d.get("ip") == dev["ip"] for d in devices):
+                        devices.append(dev)
+                        devices.sort(key=lambda d: ipaddress.ip_address(d["ip"]))
+                    if not any(d.get("ip") == dev["ip"] for d in selected_targets):
+                        selected_targets.append(dev)
+                try:
+                    more = questionary.confirm("Add another manual target?", default=False).ask()
+                    if not more:
+                        break
+                except KeyboardInterrupt:
+                    break
+        
+        if not selected_targets:
             console.print(" [error]Cancelled. No devices selected.[/error]")
             sys.exit(0)
         
-        return answer
+        return selected_targets
     
     except KeyboardInterrupt:
         console.print(" [error]Cancelled by user.[/error]")
         sys.exit(0)
 
 
-def prompt_whitelist_selection(devices, default_whitelisted=None):
+def prompt_whitelist_selection(devices, default_whitelisted=None, interface=None):
     if default_whitelisted is None:
         default_whitelisted = []
         
@@ -435,13 +476,15 @@ def prompt_whitelist_selection(devices, default_whitelisted=None):
     initial_focus = None
     max_ip_len = max((len(dev['ip']) for dev in devices), default=15)
     
+    choices.append(questionary.Choice(title="+ [Add device manually by IP/MAC]", value="__manual__"))
+
     for dev in devices:
         mac = dev.get("mac", "Unknown")
         mac_lower = mac.lower()
         vendor = dev.get("vendor", "")
         
-        is_predefined = mac_lower in predefined_wl
-        rule_name = predefined_wl.get(mac_lower, "")
+        is_predefined = mac_lower in predefined_wl or dev["ip"] in predefined_wl
+        rule_name = predefined_wl.get(mac_lower, "") or predefined_wl.get(dev["ip"], "")
         
         if is_predefined and rule_name:
             display_line = f"{dev['ip']:<{max_ip_len}}  {mac:<17}  {vendor} ({rule_name})"
@@ -471,11 +514,33 @@ def prompt_whitelist_selection(devices, default_whitelisted=None):
             style=custom_style
         ).ask(kbi_msg="")
 
-        if not answer:
+        if answer is None:
+            console.print(" [error]Cancelled by user.[/error]")
+            sys.exit(0)
+
+        selected_safe = [d for d in answer if d != "__manual__"]
+
+        if "__manual__" in answer:
+            while True:
+                dev = prompt_manual_device(interface)
+                if dev:
+                    if not any(d.get("ip") == dev["ip"] for d in devices):
+                        devices.append(dev)
+                        devices.sort(key=lambda d: ipaddress.ip_address(d["ip"]))
+                    if not any(d.get("ip") == dev["ip"] for d in selected_safe):
+                        selected_safe.append(dev)
+                try:
+                    more = questionary.confirm("Add another manual whitelisted device?", default=False).ask()
+                    if not more:
+                        break
+                except KeyboardInterrupt:
+                    break
+
+        if not selected_safe:
             console.print(" [error]Cancelled. No devices selected.[/error]")
             sys.exit(0)
         
-        return answer
+        return selected_safe
     
     except KeyboardInterrupt:
         console.print(" [error]Cancelled by user.[/error]")
