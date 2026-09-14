@@ -1,6 +1,8 @@
 import os
+import json
+import time
 import logging
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 
 from core.engine import ThrottnuxEngine
 from core.config import (
@@ -32,6 +34,34 @@ engine = ThrottnuxEngine()
 def index():
     """Render main web dashboard."""
     return render_template("index.html")
+
+
+@app.route("/api/stream")
+def sse_stream():
+    """Server-Sent Events stream for real-time dynamic engine updates."""
+    def event_generator():
+        q = engine.subscribe_events()
+        try:
+            # Send initial sync event
+            initial_data = json.dumps({"type": "init", "state": engine.get_state()})
+            yield f"data: {initial_data}\n\n"
+
+            while True:
+                try:
+                    # Wait up to 15s for new events or send heartbeat keepalive
+                    msg = q.get(timeout=15.0)
+                    yield f"data: {json.dumps(msg)}\n\n"
+                except Exception:
+                    # Send keepalive comment
+                    yield f": keepalive\n\n"
+        finally:
+            engine.unsubscribe_events(q)
+
+    return Response(event_generator(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive"
+    })
 
 
 @app.route("/api/status", methods=["GET"])
@@ -172,6 +202,41 @@ def stop_session():
     return jsonify({"success": ok, "message": msg, "state": engine.get_state()})
 
 
+@app.route("/api/session/limit", methods=["POST"])
+def update_session_limit():
+    """Dynamically change bandwidth limit on the fly without stopping session."""
+    data = request.get_json(silent=True) or {}
+    limit_mbps = data.get("limit_mbps")
+    if limit_mbps is None:
+        return jsonify({"success": False, "error": "limit_mbps is required."}), 400
+
+    try:
+        limit_val = float(limit_mbps)
+        if limit_val <= 0:
+            return jsonify({"success": False, "error": "limit_mbps must be greater than 0."}), 400
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid limit_mbps value."}), 400
+
+    ok, msg = engine.update_limit(limit_val)
+    return jsonify({"success": ok, "message": msg, "limit_mbps": limit_val})
+
+
+@app.route("/api/target/toggle", methods=["POST"])
+def toggle_target():
+    """Hot-toggle individual target throttling in a running session."""
+    data = request.get_json(silent=True) or {}
+    ip = data.get("ip")
+    should_throttle = data.get("should_throttle")
+
+    if not ip or should_throttle is None:
+        return jsonify({"success": False, "error": "ip and should_throttle parameters are required."}), 400
+
+    ok, msg = engine.toggle_target(ip, bool(should_throttle))
+    if ok:
+        return jsonify({"success": True, "message": msg, "state": engine.get_state()})
+    return jsonify({"success": False, "error": msg}), 400
+
+
 @app.route("/api/telemetry", methods=["GET"])
 def get_telemetry():
     """Real-time throughput metrics."""
@@ -194,3 +259,4 @@ def create_app():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+

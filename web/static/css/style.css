@@ -831,3 +831,265 @@ body {
 .empty-state i {
     margin-bottom: 12px;
 }
+
+/* ==========================================================
+   DYNAMIC TREATMENT & CLI-PARITY VISUAL STYLES
+   ========================================================== */
+
+/* Dynamic Radar Banner */
+.dynamic-radar-banner {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 16px 24px;
+    background: linear-gradient(135deg, rgba(0, 245, 160, 0.1) 0%, rgba(0, 242, 254, 0.05) 100%);
+    border: 1px solid rgba(0, 245, 160, 0.3);
+    border-radius: var(--radius-lg);
+    margin-bottom: 24px;
+    box-shadow: 0 0 25px rgba(0, 245, 160, 0.15);
+    animation: fadeIn 0.4s ease;
+}
+
+.radar-pulse-ring {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    background: rgba(0, 245, 160, 0.15);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-emerald);
+    font-size: 1.3rem;
+    box-shadow: 0 0 15px rgba(0, 245, 160, 0.3);
+}
+
+.radar-sweep {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color: var(--accent-emerald);
+    animation: radarSpin 1.8s linear infinite;
+}
+
+@keyframes radarSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.radar-info {
+    flex: 1;
+}
+
+.radar-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.radar-live-pill {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent-emerald);
+    background: rgba(0, 245, 160, 0.2);
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+    animation: pulseAnimation 1.5s infinite;
+}
+
+.radar-desc {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.radar-stats {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-left: 16px;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.radar-stat-item {
+    text-align: center;
+}
+
+.radar-stat-item .stat-num {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    color: var(--accent-emerald);
+}
+
+.radar-stat-item .stat-lbl {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+/* Hot-Toggle Switch Controls */
+.hot-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.switch-toggle {
+    position: relative;
+    display: inline-block;
+    width: 38px;
+    height: 20px;
+}
+
+.switch-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.15);
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 34px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #fff;
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background: var(--gradient-danger);
+    box-shadow: 0 0 10px rgba(255, 42, 109, 0.4);
+}
+
+input:checked + .slider:before {
+    transform: translateX(18px);
+}
+
+.label-throttled {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--accent-rose);
+}
+
+.label-bypassed {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+/* Status Indicator Dots */
+.status-dot-sm {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.status-dot-sm.online {
+    background: var(--accent-emerald);
+    box-shadow: 0 0 8px var(--accent-emerald);
+}
+
+.status-dot-sm.offline {
+    background: var(--text-muted);
+}
+
+/* Live Speed Meter & Gauge */
+.live-speed-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 140px;
+}
+
+.speed-text-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+}
+
+.speed-mbps-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.speed-meter-track {
+    width: 100%;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.speed-meter-bar {
+    height: 100%;
+    background: var(--gradient-brand);
+    border-radius: 4px;
+    transition: width 0.4s ease;
+    box-shadow: 0 0 8px rgba(0, 242, 254, 0.5);
+}
+
+/* Glowing Pulse Badge for Auto-Trapped Devices */
+.badge-pulse-glow {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    background: rgba(255, 42, 109, 0.2);
+    color: var(--accent-rose);
+    border: 1px solid rgba(255, 42, 109, 0.5);
+    box-shadow: 0 0 12px rgba(255, 42, 109, 0.4);
+    animation: pulseAnimation 1.5s infinite;
+}
+
+.row-new-target {
+    animation: highlightNewRow 3s ease-out;
+}
+
+@keyframes highlightNewRow {
+    0% { background: rgba(255, 42, 109, 0.2); }
+    100% { background: transparent; }
+}
+
+.badge-selected {
+    background: rgba(0, 242, 254, 0.15);
+    color: var(--accent-cyan);
+    border: 1px solid rgba(0, 242, 254, 0.3);
+}
+
+.badge-idle {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+}
+

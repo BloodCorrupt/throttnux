@@ -125,6 +125,29 @@
                     </div>
                 </div>
 
+                <!-- Live Dynamic Radar / Auto-Throttle Banner (Dynamic CLI treatment) -->
+                <div class="dynamic-radar-banner" id="dynamicRadarBanner" style="display: none;">
+                    <div class="radar-pulse-ring">
+                        <div class="radar-sweep"></div>
+                        <i class="fa-solid fa-satellite-dish"></i>
+                    </div>
+                    <div class="radar-info">
+                        <div class="radar-title">
+                            <span class="badge badge-whitelist"><i class="fa-solid fa-shield-virus"></i> Auto-Throttle Radar Active</span>
+                            <span class="radar-live-pill">LIVE PROBING</span>
+                        </div>
+                        <p class="radar-desc">
+                            Background scanner actively probing network every 8s. Any newly arriving device outside the whitelist will be <strong>auto-throttled to <span id="radarLimitVal">1.0</span> Mbps</strong> on the fly without session interruption.
+                        </p>
+                    </div>
+                    <div class="radar-stats">
+                        <div class="radar-stat-item">
+                            <span class="stat-num" id="radarThrottledCount">0</span>
+                            <span class="stat-lbl">Auto-Trapped</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Session Configuration Quick Bar -->
                 <div class="card session-setup-card">
                     <div class="card-header">
@@ -156,6 +179,9 @@
                                     <input type="number" id="customSpeedInput" min="0.1" max="1000" step="0.1" placeholder="Custom" class="input-dark custom-speed-input">
                                     <span class="input-suffix">Mbps</span>
                                 </div>
+                                <button class="btn btn-primary btn-sm" id="btnApplyLiveLimit" style="display: none;">
+                                    <i class="fa-solid fa-bolt-lightning"></i> Apply Live Limit
+                                </button>
                             </div>
                         </div>
 
@@ -167,17 +193,18 @@
                                         <th style="width: 48px;">
                                             <input type="checkbox" id="selectAllCheckbox" class="custom-checkbox">
                                         </th>
+                                        <th>Target / Status</th>
                                         <th>IP Address</th>
                                         <th>MAC Address</th>
                                         <th>Device / Vendor</th>
                                         <th>Rule Status</th>
-                                        <th>Live Speed</th>
+                                        <th>Live Speed & Meter</th>
                                         <th style="text-align: right;">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="devicesTableBody">
                                     <tr>
-                                        <td colspan="7" class="empty-state">
+                                        <td colspan="8" class="empty-state">
                                             <i class="fa-solid fa-radar fa-spin fa-2x"></i>
                                             <p>Scanning network devices...</p>
                                         </td>

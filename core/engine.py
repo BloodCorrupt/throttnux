@@ -3,6 +3,7 @@ import time
 import re
 import logging
 import subprocess
+import queue
 
 from .network import get_interfaces, get_default_gateway
 from .scanner import passive_arp_scan, merge_devices, resolve_mac, device_sort_key
@@ -55,14 +56,21 @@ class ThrottnuxEngine:
         self.session_start_time = None
         
         self.stop_event = None
-        self.spoof_threads = []
+        self.spoof_threads = {}  # {ip: (thread, stop_evt)}
         self.monitor_thread = None
         self.watcher_thread = None
+        self.bg_discovery_thread = None
         
         self.device_telemetry = {}
+        self.event_queues = []
         
         # Detect defaults
         self._detect_defaults()
+        
+        # Start continuous background discovery thread
+        self.bg_discovery_stop = threading.Event()
+        self.bg_discovery_thread = threading.Thread(target=self._bg_discovery_worker, daemon=True)
+        self.bg_discovery_thread.start()
 
     def _detect_defaults(self):
         interfaces = get_interfaces()
@@ -77,6 +85,29 @@ class ThrottnuxEngine:
     def get_default_gateway(self, interface=None):
         iface = interface or self.current_interface
         return get_default_gateway(iface) if iface else None
+
+    def subscribe_events(self):
+        """Return a queue.Queue to receive Server-Sent Events."""
+        q = queue.Queue(maxsize=100)
+        with self.lock:
+            self.event_queues.append(q)
+        return q
+
+    def unsubscribe_events(self, q):
+        """Remove an event subscriber queue."""
+        with self.lock:
+            if q in self.event_queues:
+                self.event_queues.remove(q)
+
+    def broadcast_event(self, event_type, data):
+        """Broadcast an event dictionary to all active web SSE subscribers."""
+        msg = {"type": event_type, "data": data, "timestamp": time.time()}
+        with self.lock:
+            for q in list(self.event_queues):
+                try:
+                    q.put_nowait(msg)
+                except queue.Full:
+                    pass
 
     def scan(self, interface=None, router_ip=None):
         """Perform active network scan and merge results."""
@@ -93,14 +124,43 @@ class ThrottnuxEngine:
         try:
             fresh = passive_arp_scan(iface, router)
             with self.lock:
+                prev_count = len(self.devices)
                 self.devices = merge_devices(self.devices, fresh)
                 self.current_interface = iface
                 self.current_router_ip = router
-                return list(self.devices)
+                devices_list = list(self.devices)
+
+            new_added = len(devices_list) - prev_count
+            if new_added > 0:
+                self.broadcast_event("devices_updated", {"devices": devices_list, "new_count": new_added})
+
+            return devices_list
         finally:
             with self.lock:
                 if not was_running:
                     self.status = "IDLE"
+
+    def _bg_discovery_worker(self):
+        """Continuous passive device discovery worker running every 10s."""
+        while not self.bg_discovery_stop.is_set():
+            if self.bg_discovery_stop.wait(10):
+                break
+
+            if not self.current_interface or not self.current_router_ip:
+                continue
+
+            try:
+                fresh = passive_arp_scan(self.current_interface, self.current_router_ip)
+                if fresh:
+                    with self.lock:
+                        prev_ips = {d.get("ip") for d in self.devices}
+                        self.devices = merge_devices(self.devices, fresh)
+                        new_devices = [d for d in self.devices if d.get("ip") not in prev_ips]
+                    
+                    if new_devices:
+                        self.broadcast_event("devices_discovered", {"new_devices": new_devices, "all_devices": list(self.devices)})
+            except Exception:
+                pass
 
     def add_manual_device(self, ip=None, mac=None, vendor="Manual Entry"):
         """Add or update a device manually."""
@@ -109,7 +169,6 @@ class ThrottnuxEngine:
             ip_clean = ip.strip() if ip else "-"
             
             if ip_clean != "-" and not mac_clean:
-                # Attempt to resolve MAC
                 mac_clean = resolve_mac(ip_clean, self.current_interface) or "Unknown"
             elif not mac_clean:
                 mac_clean = "Unknown"
@@ -120,10 +179,10 @@ class ThrottnuxEngine:
                 "vendor": vendor or "Manual Entry"
             }
 
-            # Update existing or append
             existing_idx = None
             for idx, d in enumerate(self.devices):
-                if (mac_clean != "Unknown" and d.get("mac", "").lower() == mac_clean) or (ip_clean != "-" and d.get("ip") == ip_clean):
+                d_mac = d.get("mac", "").lower()
+                if (mac_clean != "Unknown" and d_mac == mac_clean) or (ip_clean != "-" and d.get("ip") == ip_clean):
                     existing_idx = idx
                     break
 
@@ -133,7 +192,9 @@ class ThrottnuxEngine:
                 self.devices.append(dev)
 
             self.devices.sort(key=device_sort_key)
-            return dev
+
+        self.broadcast_event("device_added", {"device": dev, "all_devices": list(self.devices)})
+        return dev
 
     def clear_cache(self):
         """Clear device cache and saved session."""
@@ -141,7 +202,9 @@ class ThrottnuxEngine:
             if self.status == "RUNNING":
                 return False, "Cannot clear cache while session is running."
             self.devices = []
-            return True, "Device cache cleared."
+
+        self.broadcast_event("cache_cleared", {})
+        return True, "Device cache cleared."
 
     def start_session(self, interface, router_ip, mode, targets, limit_mbps, whitelisted=None):
         """Launch traffic shaping and ARP spoofing session."""
@@ -158,7 +221,7 @@ class ThrottnuxEngine:
             self.whitelisted = list(whitelisted) if whitelisted else []
             self.session_start_time = time.time()
             self.stop_event = threading.Event()
-            self.spoof_threads = []
+            self.spoof_threads = {}
             self.device_telemetry = {}
 
         try:
@@ -168,17 +231,11 @@ class ThrottnuxEngine:
             # 2. Setup traffic shaping
             setup_traffic_shaping(interface, self.targets, self.limit_mbps)
 
-            # 3. Start ARP spoofers
+            # 3. Start ARP spoofers per target
             for tgt in self.targets:
                 tgt_ip = tgt.get("ip") if isinstance(tgt, dict) else tgt
                 if tgt_ip and tgt_ip != "-":
-                    t = threading.Thread(
-                        target=arp_spoof_loop,
-                        args=(interface, tgt_ip, router_ip, self.stop_event),
-                        daemon=True
-                    )
-                    t.start()
-                    self.spoof_threads.append(t)
+                    self._spawn_spoofer(interface, tgt_ip, router_ip)
 
             # 4. Save session config
             save_config(interface, router_ip, mode, self.targets, self.limit_mbps, whitelisted=self.whitelisted)
@@ -202,7 +259,7 @@ class ThrottnuxEngine:
                         "added_time": time.time(),
                     }
 
-            # 6. Start background telemetry collector thread
+            # 6. Start telemetry collector thread
             self.monitor_thread = threading.Thread(target=self._telemetry_worker, daemon=True)
             self.monitor_thread.start()
 
@@ -211,11 +268,98 @@ class ThrottnuxEngine:
                 self.watcher_thread = threading.Thread(target=self._whitelist_watcher_worker, daemon=True)
                 self.watcher_thread.start()
 
+            self.broadcast_event("session_started", self.get_state())
             return True, "Session started successfully."
         except Exception as e:
             log.error(f"Failed to start session: {e}")
             self.stop_session()
             return False, str(e)
+
+    def _spawn_spoofer(self, interface, target_ip, router_ip):
+        """Spawn individual ARP spoofing thread for a target."""
+        target_stop_event = threading.Event()
+        t = threading.Thread(
+            target=arp_spoof_loop,
+            args=(interface, target_ip, router_ip, target_stop_event),
+            daemon=True
+        )
+        t.start()
+        self.spoof_threads[target_ip] = (t, target_stop_event)
+
+    def _stop_spoofer(self, target_ip):
+        """Stop individual ARP spoofing thread for a target."""
+        if target_ip in self.spoof_threads:
+            t, evt = self.spoof_threads.pop(target_ip)
+            evt.set()
+            t.join(timeout=2)
+
+    def update_limit(self, new_limit_mbps):
+        """Dynamically update bandwidth limit on the fly without stopping session."""
+        with self.lock:
+            self.limit_mbps = float(new_limit_mbps)
+            if self.status != "RUNNING" or not self.current_interface:
+                return True, f"Default limit set to {self.limit_mbps} Mbps."
+
+            # Re-apply tc class limits on the fly
+            limit_kbps = int(self.limit_mbps * 1000)
+            burst = max(int(limit_kbps / 8), 15)
+
+            for ip, state in self.device_telemetry.items():
+                class_id = state.get("class_id")
+                if class_id:
+                    cmd = (
+                        f"tc class change dev {self.current_interface} parent 1:1 classid 1:{class_id} "
+                        f"htb rate {limit_kbps}kbit ceil {limit_kbps}kbit burst {burst}k"
+                    )
+                    run_cmd(cmd)
+
+        self.broadcast_event("limit_updated", {"limit_mbps": self.limit_mbps})
+        return True, f"Live limit updated to {self.limit_mbps} Mbps."
+
+    def toggle_target(self, ip, should_throttle):
+        """Hot-plug or remove a target from live session."""
+        with self.lock:
+            if self.status != "RUNNING" or not self.current_interface:
+                return False, "Session is not running."
+
+            target_dev = next((d for d in self.devices if d.get("ip") == ip), None)
+            if not target_dev:
+                target_dev = {"ip": ip, "mac": "Unknown", "vendor": "Unknown"}
+
+            if should_throttle:
+                if ip in self.device_telemetry:
+                    return True, "Target is already being throttled."
+
+                class_id = 10 + len(self.targets)
+                add_target_shaping(self.current_interface, ip, class_id, self.limit_mbps)
+                self._spawn_spoofer(self.current_interface, ip, self.current_router_ip)
+
+                now = time.time()
+                self.targets.append(target_dev)
+                self.device_telemetry[ip] = {
+                    "class_id": class_id,
+                    "mac": target_dev.get("mac", "Unknown"),
+                    "vendor": target_dev.get("vendor", "Unknown"),
+                    "speed_kbps": 0.0,
+                    "total_bytes": 0,
+                    "last_bytes": 0,
+                    "last_time": now,
+                    "is_online": True,
+                    "is_new": True,
+                    "added_time": now,
+                }
+                msg = f"Started live throttling {ip} at {self.limit_mbps} Mbps."
+            else:
+                if ip not in self.device_telemetry:
+                    return True, "Target is not currently throttled."
+
+                self._stop_spoofer(ip)
+                del self.device_telemetry[ip]
+                self.targets = [t for t in self.targets if (t.get("ip") if isinstance(t, dict) else t) != ip]
+                msg = f"Stopped throttling {ip}."
+
+        self.broadcast_event("target_toggled", {"ip": ip, "is_throttled": should_throttle, "state": self.get_state()})
+        return True, msg
 
     def stop_session(self):
         """Safely stop traffic shaping and spoofing."""
@@ -227,8 +371,9 @@ class ThrottnuxEngine:
         if self.stop_event:
             self.stop_event.set()
 
-        # Wait for spoof threads
-        for t in self.spoof_threads:
+        # Stop all individual spoofers
+        for ip, (t, evt) in list(self.spoof_threads.items()):
+            evt.set()
             t.join(timeout=2)
         self.spoof_threads.clear()
 
@@ -244,14 +389,18 @@ class ThrottnuxEngine:
             self.session_start_time = None
             self.device_telemetry.clear()
 
+        self.broadcast_event("session_stopped", self.get_state())
         return True, "Session stopped and network restored."
 
     def _telemetry_worker(self):
         """Collects live throughput numbers and online status from tc classes."""
+        probe_counter = 0
         while self.stop_event and not self.stop_event.is_set():
             time.sleep(1.0)
             if not self.current_interface:
                 continue
+
+            probe_counter += 1
 
             # Read tc class stats
             res = run_cmd(f"tc -s class show dev {self.current_interface}")
@@ -289,6 +438,15 @@ class ThrottnuxEngine:
                         state["last_time"] = now
                         state["speed_kbps"] = round(speed_kbps, 1)
 
+                    # Dynamic online check every 4s
+                    if probe_counter % 4 == 0:
+                        is_active = (state.get("speed_kbps", 0) > 0)
+                        if not is_active:
+                            # Send silent ARP probe
+                            probe_res = run_cmd(f"arping -c 1 -w 1 -I {self.current_interface} {ip}")
+                            is_active = (probe_res.returncode == 0)
+                        state["is_online"] = is_active
+
                     # Badging expiry
                     if state.get("is_new") and (now - state.get("added_time", 0) > 30):
                         state["is_new"] = False
@@ -302,7 +460,7 @@ class ThrottnuxEngine:
         safe_ips = {dev.get("ip") for dev in self.whitelisted if dev.get("ip") and dev.get("ip") != "-"}
 
         while self.stop_event and not self.stop_event.is_set():
-            if self.stop_event.wait(10):
+            if self.stop_event.wait(8):
                 break
 
             try:
@@ -334,14 +492,8 @@ class ThrottnuxEngine:
                     class_id = 10 + len(self.targets)
                     add_target_shaping(self.current_interface, dev_ip, class_id, self.limit_mbps)
 
-                    # Start spoofer
-                    t = threading.Thread(
-                        target=arp_spoof_loop,
-                        args=(self.current_interface, dev_ip, self.current_router_ip, self.stop_event),
-                        daemon=True
-                    )
-                    t.start()
-                    self.spoof_threads.append(t)
+                    # Start individual spoofer
+                    self._spawn_spoofer(self.current_interface, dev_ip, self.current_router_ip)
 
                     # Record target & telemetry
                     now = time.time()
@@ -359,12 +511,18 @@ class ThrottnuxEngine:
                         "added_time": now,
                     }
 
+                # Broadcast live hotplug event to web UI
+                self.broadcast_event("device_auto_throttled", {
+                    "device": dev,
+                    "limit_mbps": self.limit_mbps,
+                    "target_count": len(self.targets)
+                })
+
     def get_state(self):
         """Return comprehensive JSON-serializable snapshot."""
         with self.lock:
             uptime = int(time.time() - self.session_start_time) if self.session_start_time else 0
             
-            # Format telemetry list
             telemetry_list = []
             total_speed = 0.0
             total_data = 0
